@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@moonquake2004/dsh-security)](https://www.npmjs.com/package/@moonquake2004/dsh-security)
-[![Tests](https://img.shields.io/badge/tests-50%2F50%20passing-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-56%2F56%20passing-brightgreen)](#)
 
 **DSH 生态统一安全检查框架** — 覆盖插件全生命周期（发现→安装→运行→更新→退役），17 个内置检查 + 4 个外部工具集成。
 
@@ -181,7 +181,16 @@ dsh-security 通过网络 API 获取生态兼容性数据，自动检查已知 b
 
 > **感谢 [@ArmyWas](https://github.com/ArmyWas)** 开发的插件故障最小化工具，用 delta debugging 找到最小故障插件集。
 
-dsh-security 自动检测 dsh-plugin-reducer 是否已安装，如已安装则在检测到故障时提供最小化建议（EXT-RED-1）。
+dsh-security 自动检测当前项目是否安装了兼容版本；需要该集成时，请显式固定已经验证的版本：
+
+```bash
+npm install --save-exact dsh-plugin-reducer@0.3.1
+```
+
+集成直接执行这个已安装包声明的 CLI 入口，不调用未固定版本的 `npx`，也不拼接 shell
+命令；整个诊断仍受 120 秒进程级超时约束。它会从 `DSH_HOME/profiles/<profile>` 目录
+分别推导 Harness home 和 profile 名称，并读取稳定的
+`report.result.minimalFailingSet` JSON 报告字段（EXT-RED-1）。
 
 ### [npm audit](https://docs.npmjs.com/cli/v9/commands/npm-audit) — 依赖漏洞扫描
 
