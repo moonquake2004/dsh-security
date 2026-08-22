@@ -1,23 +1,22 @@
 /**
  * dsh-sandbox-audit 集成
  *
- * 通过 Plugin Interface 注册沙箱策略审计检查。
- * 如果 dsh-sandbox-audit 已安装，自动集成到安全检查流程。
+ * 如果 dsh-sandbox-audit 已安装（PATH 中可执行），自动集成到安全检查流程。
+ * 复审修复：不再用 `npx 包名` 探测可用性——那会在用户机器上触发任意包的下载执行；
+ * 执行失败现在返回 skip 而不是伪装成通过。
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
+import { skip } from '../protocol/check.mjs';
 
 export function isAvailable() {
   try {
-    execSync('which dsh-sandbox-audit', { encoding: 'utf8', stdio: 'pipe' });
+    execFileSync('which', ['dsh-sandbox-audit'], { encoding: 'utf8', stdio: 'pipe' });
     return true;
   } catch {
-    try {
-      execSync('npx dsh-sandbox-audit --version', { encoding: 'utf8', stdio: 'pipe', timeout: 10000 });
-      return true;
-    } catch { return false; }
+    return false;
   }
 }
 
@@ -25,11 +24,11 @@ export async function runAudit(profileDir) {
   const id = 'EXT-SA-1';
 
   if (!isAvailable()) {
-    return { id, ok: true, severity: Severity.MEDIUM, detail: 'dsh-sandbox-audit 未安装，跳过沙箱策略审计' };
+    return skip(id, Severity.MEDIUM, 'dsh-sandbox-audit 未安装，跳过沙箱策略审计');
   }
 
   try {
-    const output = execSync(`npx dsh-sandbox-audit "${profileDir}" --json`, {
+    const output = execFileSync('dsh-sandbox-audit', [String(profileDir), '--json'], {
       encoding: 'utf8',
       timeout: 60000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -52,7 +51,7 @@ export async function runAudit(profileDir) {
       fix: '参考 dsh-sandbox-audit 文档修复沙箱配置',
     };
   } catch (e) {
-    return { id, ok: true, severity: Severity.MEDIUM, detail: `dsh-sandbox-audit 执行失败：${e.message.slice(0, 80)}` };
+    return skip(id, Severity.MEDIUM, `dsh-sandbox-audit 执行失败，跳过：${e.message.slice(0, 80)}`);
   }
 }
 

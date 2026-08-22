@@ -1,20 +1,21 @@
 /**
  * SR3: Data Exfiltration — 数据外泄检测
  *
- * 分析会话日志中的工具调用，检测潜在的数据外泄行为：
- * - 大量文件读取后接网络请求
- * - 凭据转发（将密钥传递给外部工具）
- * - 异常的数据流模式
+ * 分析会话日志中的工具调用与结果，检测潜在的数据外泄行为：
+ * - 凭据转发（API key / token / Bearer 出现在命令或返回内容中）
+ * - 网络外发模式（curl POST、fetch 等）
+ *
+ * 支持明文与 zstd 压缩会话日志（session-reader）。
  *
  * Severity: HIGH
  * Phase: RUNTIME
  */
 
-import { existsSync, createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
+import { scanSessionLines } from '../session-reader.mjs';
 
 /** 凭据转发模式 */
 const CREDENTIAL_FORWARD_PATTERNS = [
@@ -31,36 +32,25 @@ const NETWORK_EXFIL_PATTERNS = [
   { name: 'HTTP request with data', regex: /http\.request|https\.request|axios\.post/gi, severity: 'low' },
 ];
 
-/** 大量数据读取模式 */
-const BULK_READ_PATTERNS = [
-  { name: 'read entire file', regex: /readFileSync|readFile\b|cat\s+[^|]+$/gm, severity: 'low' },
-  { name: 'directory listing', regex: /readdirSync|readdir\b|ls\s+-[la]*/gi, severity: 'low' },
-];
-
 /**
- * 从一行 JSONL 中提取工具调用信息
+ * 从一行 JSONL 中提取文本信息（call 与 result 都扫：凭据出现在返回内容中同样是泄露）
  */
 function extractToolCalls(line) {
   try {
     const event = JSON.parse(line);
     if (event.type !== 'tool/call' && event.type !== 'tool/result') return [];
 
-    const calls = [];
     const data = event.data || {};
     const name = data.name || data.tool || '';
-    const args = data.args || data.input || {};
+    const args = data.args || data.input || data.output || data.result || data.text || {};
     const text = typeof args === 'string' ? args : JSON.stringify(args);
 
-    calls.push({ type: event.type, name, text, seq: event.seq, turn: event.turn });
-    return calls;
+    return [{ type: event.type, name, text, seq: event.seq, turn: event.turn }];
   } catch {
     return [];
   }
 }
 
-/**
- * 扫描文本中的危险模式
- */
 function scanPatterns(text, patterns) {
   const findings = [];
   for (const pattern of patterns) {
@@ -76,11 +66,6 @@ function scanPatterns(text, patterns) {
   return findings;
 }
 
-/**
- * SR3 检查：分析会话日志中的数据外泄行为
- * @param {string} sessionFile - 会话日志文件路径
- * @returns {Promise<import('../protocol/check.mjs').SecurityCheckResult>}
- */
 export async function run(sessionFile) {
   const id = 'SR3';
 
@@ -88,34 +73,26 @@ export async function run(sessionFile) {
     return pass(id, Severity.HIGH, '无会话日志，跳过数据外泄检查');
   }
 
-  if (sessionFile.endsWith('.zstd')) {
-    return pass(id, Severity.HIGH, 'zstd 压缩的会话文件需先解压再检查');
-  }
-
   const findings = [];
   let lineCount = 0;
 
-  const fileStream = createReadStream(sessionFile, { encoding: 'utf8' });
-  const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    lineCount++;
-    if (!line.trim()) continue;
-
-    const calls = extractToolCalls(line);
-    for (const call of calls) {
-      // 扫描凭据转发
-      const credFindings = scanPatterns(call.text, CREDENTIAL_FORWARD_PATTERNS);
-      for (const f of credFindings) {
-        findings.push({ ...f, line: lineCount, tool: call.name, category: 'credential-forward' });
+  try {
+    lineCount = await scanSessionLines(sessionFile, (line, lineNo) => {
+      if (!line.trim()) return;
+      for (const call of extractToolCalls(line)) {
+        for (const f of scanPatterns(call.text, CREDENTIAL_FORWARD_PATTERNS)) {
+          findings.push({ ...f, line: lineNo, tool: call.name, category: 'credential-forward' });
+        }
+        for (const f of scanPatterns(call.text, NETWORK_EXFIL_PATTERNS)) {
+          findings.push({ ...f, line: lineNo, tool: call.name, category: 'network-exfil' });
+        }
       }
-
-      // 扫描网络外发
-      const netFindings = scanPatterns(call.text, NETWORK_EXFIL_PATTERNS);
-      for (const f of netFindings) {
-        findings.push({ ...f, line: lineCount, tool: call.name, category: 'network-exfil' });
-      }
+    });
+  } catch (e) {
+    if (e.code === 'ZSTD_UNAVAILABLE') {
+      return skip(id, Severity.HIGH, 'zstd 命令不可用，无法解压压缩会话日志，跳过数据外泄检查');
     }
+    throw e;
   }
 
   if (findings.length === 0) {
@@ -157,7 +134,7 @@ export const sr3Check = {
   name: 'data-exfiltration',
   severity: Severity.HIGH,
   phase: CheckPhase.RUNTIME,
-  description: '数据外泄行为检测（会话日志分析）',
+  description: '数据外泄行为检测（会话日志分析，支持 zstd）',
   src: 'builtin',
   runner: (sessionFile) => run(sessionFile),
 };

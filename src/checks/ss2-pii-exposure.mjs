@@ -11,11 +11,11 @@
  * Phase: POST_INSTALL
  */
 
-import { existsSync, createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
+import { scanSessionLines } from '../session-reader.mjs';
 
 const PII_PATTERNS = [
   { name: 'email', regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, severity: 'medium' },
@@ -23,6 +23,12 @@ const PII_PATTERNS = [
   { name: 'ID card', regex: /[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]/g, severity: 'high' },
   { name: 'IPv4', regex: /\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g, severity: 'low' },
 ];
+
+/** PII 掩码：保留类型可辨识度，不回显完整个人信息 */
+function maskPII(s) {
+  if (s.length <= 6) return `***(${s.length} chars)`;
+  return `${s.slice(0, 2)}***${s.slice(-2)}(${s.length} chars)`;
+}
 
 function extractTextFromLine(line) {
   try {
@@ -41,21 +47,25 @@ function extractTextFromLine(line) {
 export async function run(sessionFile) {
   const id = 'SS2';
   if (!sessionFile || !existsSync(sessionFile)) return pass(id, Severity.MEDIUM, '无会话文件，跳过 PII 检测');
-  if (sessionFile.endsWith('.zstd')) return pass(id, Severity.MEDIUM, 'zstd 文件需先解压');
 
   const findings = [];
   let lineCount = 0;
-  const rl = createInterface({ input: createReadStream(sessionFile, { encoding: 'utf8' }), crlfDelay: Infinity });
 
-  for await (const line of rl) {
-    lineCount++;
-    if (!line.trim()) continue;
-    const text = extractTextFromLine(line);
-    for (const pattern of PII_PATTERNS) {
-      for (const match of text.matchAll(new RegExp(pattern.regex.source, 'g'))) {
-        findings.push({ type: pattern.name, severity: pattern.severity, line: lineCount, snippet: match[0].slice(0, 30) });
+  try {
+    lineCount = await scanSessionLines(sessionFile, (line, lineNo) => {
+      if (!line.trim()) return;
+      const text = extractTextFromLine(line);
+      for (const pattern of PII_PATTERNS) {
+        for (const match of text.matchAll(new RegExp(pattern.regex.source, 'g'))) {
+          findings.push({ type: pattern.name, severity: pattern.severity, line: lineNo, snippet: maskPII(match[0]) });
+        }
       }
+    });
+  } catch (e) {
+    if (e.code === 'ZSTD_UNAVAILABLE') {
+      return skip(id, Severity.MEDIUM, 'zstd 命令不可用，无法解压压缩会话日志，跳过 PII 检测');
     }
+    throw e;
   }
 
   if (findings.length === 0) return pass(id, Severity.MEDIUM, `扫描 ${lineCount} 行，未检测到 PII 暴露`);

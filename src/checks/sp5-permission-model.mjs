@@ -37,21 +37,39 @@ export async function run(profileDir) {
   const issues = [];
   for (const entry of readdirSync(nmDir, { withFileTypes: true })) {
     if (entry.name.startsWith('.') || entry.name === '.bin') continue;
-    const pkgPath = join(nmDir, entry.name, 'package.json');
-    if (!existsSync(pkgPath)) continue;
+    // scoped 包（@scope/pkg）：复审修复——此前把 @scope 当包名拼路径，scoped 插件全部漏扫
+    if (entry.isDirectory() && entry.name.startsWith('@')) {
+      const scopeDir = join(nmDir, entry.name);
+      let pkgs = [];
+      try { pkgs = readdirSync(scopeDir, { withFileTypes: true }); } catch { continue; }
+      for (const pkg of pkgs) {
+        if (!pkg.isDirectory()) continue;
+        issues.push(...inspectPackage(join(scopeDir, pkg.name), join(entry.name, pkg.name)));
+      }
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    issues.push(...inspectPackage(join(nmDir, entry.name), entry.name));
+  }
+
+  function inspectPackage(pkgDir, displayName) {
+    const found = [];
+    const pkgPath = join(pkgDir, 'package.json');
+    if (!existsSync(pkgPath)) return found;
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-      if (!pkg.dsh?.bundle) continue;
-      const patchPath = join(nmDir, entry.name, 'cordis.patch.yml');
+      if (!pkg.dsh?.bundle) return found;
+      const patchPath = join(pkgDir, 'cordis.patch.yml');
       if (existsSync(patchPath)) {
         const content = readFileSync(patchPath, 'utf8');
-        issues.push(...scanForUndeclaredCapabilities(content, pkg.name));
+        found.push(...scanForUndeclaredCapabilities(content, pkg.name || displayName));
       }
     } catch { /* skip */ }
+    return found;
   }
 
   if (issues.length === 0) return pass(id, Severity.MEDIUM, '插件权限声明一致');
-  const details = issues.slice(0, 10).map(i => `[${i.severity}] ${i.detail}`).join('\n');
+  const details = issues.slice(0, 10).map(i => `[${i.severity}] ${i.type}: ${i.detail}`).join('\n');
   return fail(id, Severity.MEDIUM, `检测到 ${issues.length} 个权限声明问题：\n${details}`, '为插件显式声明所需的权限范围');
 }
 

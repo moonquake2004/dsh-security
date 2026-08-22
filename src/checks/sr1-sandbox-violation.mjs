@@ -1,20 +1,22 @@
 /**
  * SR1: Sandbox Violation — 沙箱逃逸检测
  *
- * 分析会话日志中的工具调用，检测潜在的沙箱逃逸行为：
- * - 写操作超出 workspace 范围
- * - 访问系统级资源（/etc, /proc, 环境变量）
+ * 分析会话日志中的工具调用（tool/call），检测潜在的沙箱逃逸行为：
+ * - 访问系统级资源（/etc, /proc）
  * - 已知逃逸模式匹配（#1769 mount remount 等）
+ * - 管道执行远程脚本
+ *
+ * 支持明文与 zstd 压缩会话日志（session-reader）。
  *
  * Severity: CRITICAL
  * Phase: RUNTIME
  */
 
-import { readFileSync, existsSync, createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
+import { scanSessionLines } from '../session-reader.mjs';
 
 /** 已知逃逸模式（#1769 及同类） */
 const ESCAPE_PATTERNS = [
@@ -28,7 +30,8 @@ const ESCAPE_PATTERNS = [
 const SYSTEM_RESOURCE_PATTERNS = [
   { name: '/etc access', regex: /\/etc\/(passwd|shadow|sudoers|hosts)/gi, severity: 'high' },
   { name: '/proc access', regex: /\/proc\/(self|1|environ|cmdline)/gi, severity: 'high' },
-  { name: 'env dump', regex: /env\b|printenv|set\b.*\|/gi, severity: 'medium' },
+  // 复审修复：旧正则 /env\b|set\b.*\|/ 几乎命中一切文本；改为命令位置的 env/printenv 转储
+  { name: 'env dump', regex: /(?:^|["'|;&]\s*)(?:printenv|env)\s*(?:[|;"']|$)/gm, severity: 'medium' },
   { name: 'sudo usage', regex: /sudo\s+/gi, severity: 'high' },
   { name: 'curl/wget to unknown', regex: /curl\s+.*\|\s*(bash|sh|node)|wget\s+.*\|\s*(bash|sh|node)/gi, severity: 'critical' },
 ];
@@ -38,31 +41,30 @@ const WORKSPACE_ESCAPE_PATTERNS = [
   { name: 'write to /tmp', regex: /writeFileSync|writeFile|fs\.write|echo\s+.*>\s*\/tmp/gi, severity: 'low' },
   { name: 'write to home', regex: /writeFileSync|writeFile.*\/Users\/|\/home\//gi, severity: 'low' },
   { name: 'pipe to shell', regex: /\|\s*(bash|sh|zsh)\b/gi, severity: 'high' },
-  { name: 'exec subprocess', regex: /child_process|execSync|spawnSync|exec\b/gi, severity: 'medium' },
+  // 复审修复：去掉过宽的 exec\b（命中 "execute" 等普通词），保留具体进程 API
+  { name: 'exec subprocess', regex: /child_process|execSync|spawnSync/gi, severity: 'medium' },
 ];
 
 /**
- * 从一行 JSONL 中提取工具调用信息
+ * 从一行 JSONL 中提取工具调用信息（只看 tool/call：result 是数据不是行为）
  */
 function extractToolCalls(line) {
   try {
     const event = JSON.parse(line);
-    if (event.type !== 'tool/call' && event.type !== 'tool/result') return [];
+    if (event.type !== 'tool/call') return [];
 
-    const calls = [];
     const data = event.data || {};
     const name = data.name || data.tool || '';
     const args = data.args || data.input || {};
     const text = typeof args === 'string' ? args : JSON.stringify(args);
 
-    calls.push({
+    return [{
       type: event.type,
       name,
       text,
       seq: event.seq,
       turn: event.turn,
-    });
-    return calls;
+    }];
   } catch {
     return [];
   }
@@ -74,7 +76,8 @@ function extractToolCalls(line) {
 function scanPatterns(text, patterns) {
   const findings = [];
   for (const pattern of patterns) {
-    const matches = text.matchAll(new RegExp(pattern.regex.source, 'gi'));
+    const flags = [...new Set((pattern.regex.flags + 'g').split(''))].join('');
+    const matches = text.matchAll(new RegExp(pattern.regex.source, flags));
     for (const match of matches) {
       findings.push({
         type: pattern.name,
@@ -89,7 +92,7 @@ function scanPatterns(text, patterns) {
 
 /**
  * SR1 检查：分析会话日志中的沙箱逃逸行为
- * @param {string} sessionFile - 会话日志文件路径
+ * @param {string} sessionFile - 会话日志文件路径（.jsonl 或 .jsonl.zstd）
  * @returns {Promise<import('../protocol/check.mjs').SecurityCheckResult>}
  */
 export async function run(sessionFile) {
@@ -99,35 +102,26 @@ export async function run(sessionFile) {
     return pass(id, Severity.CRITICAL, '无会话日志，跳过运行时安全检查');
   }
 
-  if (sessionFile.endsWith('.zstd')) {
-    return pass(id, Severity.CRITICAL, 'zstd 压缩的会话文件需先解压再检查');
-  }
-
   const findings = [];
   let lineCount = 0;
 
-  const fileStream = createReadStream(sessionFile, { encoding: 'utf8' });
-  const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    lineCount++;
-    if (!line.trim()) continue;
-
-    const calls = extractToolCalls(line);
-    for (const call of calls) {
-      // 扫描工具参数中的危险模式
-      const allPatterns = [...ESCAPE_PATTERNS, ...SYSTEM_RESOURCE_PATTERNS, ...WORKSPACE_ESCAPE_PATTERNS];
-      const textFindings = scanPatterns(call.text, allPatterns);
-      for (const f of textFindings) {
-        findings.push({
-          ...f,
-          line: lineCount,
-          tool: call.name,
-          seq: call.seq,
-          turn: call.turn,
-        });
+  try {
+    lineCount = await scanSessionLines(sessionFile, (line, lineNo) => {
+      if (!line.trim()) return;
+      const calls = extractToolCalls(line);
+      for (const call of calls) {
+        const allPatterns = [...ESCAPE_PATTERNS, ...SYSTEM_RESOURCE_PATTERNS, ...WORKSPACE_ESCAPE_PATTERNS];
+        const textFindings = scanPatterns(call.text, allPatterns);
+        for (const f of textFindings) {
+          findings.push({ ...f, line: lineNo, tool: call.name, seq: call.seq, turn: call.turn });
+        }
       }
+    });
+  } catch (e) {
+    if (e.code === 'ZSTD_UNAVAILABLE') {
+      return skip(id, Severity.CRITICAL, 'zstd 命令不可用，无法解压压缩会话日志，跳过沙箱逃逸检测');
     }
+    throw e;
   }
 
   if (findings.length === 0) {
@@ -171,7 +165,7 @@ export const sr1Check = {
   name: 'sandbox-violation',
   severity: Severity.CRITICAL,
   phase: CheckPhase.RUNTIME,
-  description: '沙箱逃逸行为检测（会话日志分析）',
+  description: '沙箱逃逸行为检测（会话日志分析，支持 zstd）',
   src: 'builtin',
   runner: (sessionFile) => run(sessionFile),
 };

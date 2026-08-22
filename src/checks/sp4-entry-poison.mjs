@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail } from '../protocol/check.mjs';
+import { maxSeverity } from '../protocol/severity.mjs';
 
 /** 已知恶意 entry 模式 */
 const MALICIOUS_PATTERNS = [
@@ -68,7 +69,9 @@ export async function run(profileDir) {
   if (allFindings.length === 0) return pass(id, Severity.HIGH, `扫描 ${patchFiles.length} 个 patch 文件，未检测到恶意 entry 模式`);
 
   const details = allFindings.slice(0, 10).map(f => `[${f.severity}] ${f.type}: ${f.snippet}`).join('\n');
-  return fail(id, Severity.HIGH, `检测到 ${allFindings.length} 个可疑 entry 模式：\n${details}`, '检查相关插件的 cordis.patch.yml 内容');
+  // 复审修复：按实际命中的最高严重度定级，medium 级命中不再一律拔高成 HIGH
+  const overallSeverity = maxSeverity(allFindings.map(f => f.severity));
+  return fail(id, overallSeverity, `检测到 ${allFindings.length} 个可疑 entry 模式：\n${details}`, '检查相关插件的 cordis.patch.yml 内容', ['#2066']);
 }
 
 export const sp4Check = { id: 'SP4', name: 'entry-poison', severity: Severity.HIGH, phase: CheckPhase.POST_INSTALL, description: '恶意 entry 注入检测', src: 'builtin', runner: (d) => run(d) };

@@ -1,11 +1,12 @@
 /**
  * SL4: Release Compatibility — 发布兼容性验证
  *
- * 验证 profile 中包的 dist-tags 与 DSH 版本的兼容性：
- * - 检测 latest 指向 broken 版本
- * - 检测 next/rc 标签与本地版本的差异
- * - 验证 peerDependencies 兼容性
+ * 验证 profile 中包的 dist-tags 与本地版本的差异：
+ * - 检测 major 版本落后
+ * - 检测 latest 指向 rc/beta 预发布
+ * - 提示可用的 next 标签
  *
+ * （对齐实现：peerDependencies 兼容性验证未落地，不再宣称）
  * Severity: MEDIUM
  * Phase: LIFECYCLE
  */
@@ -14,14 +15,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Severity, maxSeverity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
 
 /**
  * 获取 npm registry dist-tags
  */
 async function fetchDistTags(pkgName) {
   try {
-    const url = `https://registry.npmjs.org/${encodeURIComponent(pkgName).replace(/%2f/g, '/')}`;
+    const url = `https://registry.npmjs.org/${encodeURIComponent(pkgName)}`;
     const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) return null;
     const data = await response.json();
@@ -106,6 +107,7 @@ export async function run(profileDir) {
 
   const allIssues = [];
   let checked = 0;
+  let errors = 0;
 
   for (const pkgName of dshPackages.slice(0, 10)) {
     const localPkgPath = join(profileDir, 'node_modules', pkgName, 'package.json');
@@ -115,7 +117,7 @@ export async function run(profileDir) {
       const localPkg = JSON.parse(readFileSync(localPkgPath, 'utf8'));
       const distTags = await fetchDistTags(pkgName);
 
-      if (!distTags) continue;
+      if (!distTags) { errors++; continue; }
 
       const issues = checkCompatibility(localPkg.version, distTags);
       for (const issue of issues) {
@@ -123,13 +125,18 @@ export async function run(profileDir) {
       }
       checked++;
     } catch {
-      // 跳过查询失败的包
+      errors++;
     }
+  }
+
+  // 全部查询失败 → skip（离线时不应谎报"无异常"）
+  if (checked === 0 && errors > 0) {
+    return skip(id, Severity.MEDIUM, `${errors} 个包 registry 查询失败（离线或网络受限），跳过发布兼容性验证`);
   }
 
   if (allIssues.length === 0) {
     return pass(id, Severity.MEDIUM,
-      `验证 ${checked} 个包的发布兼容性，无异常`
+      `验证 ${checked} 个包的发布兼容性，无异常${errors > 0 ? `（${errors} 个查询失败）` : ''}`
     );
   }
 

@@ -47,3 +47,12 @@ export function pass(id, severity, detail) {
 export function fail(id, severity, detail, fix, references = []) {
   return createResult(id, false, severity, detail, fix, references);
 }
+
+/**
+ * 跳过结果——检查因外部条件不满足而未真正执行（如网络不可达、依赖工具缺失）。
+ * skipped=true 的结果不计入失败统计，也不影响退出码；
+ * detail 必须说明原因（对齐 #1719 r5 词汇表「skip 必须带 reason」）。
+ */
+export function skip(id, severity, detail) {
+  return { id, ok: true, skipped: true, severity, detail };
+}

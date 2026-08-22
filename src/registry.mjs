@@ -2,22 +2,41 @@
  * DSH Security Framework — Check Registry
  *
  * 管理安全检查的注册、发现和执行。
- * 支持内置检查和外部工具注册的检查。
+ * 支持内置检查、外部工具集成（自动探测）和 checks.d JSON 注册（显式启用）。
  */
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { maxSeverity, severityToExitCode } from './protocol/severity.mjs';
+import { maxSeverity, severityToExitCode, severityGte } from './protocol/severity.mjs';
+
+const VALID_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
 export class SecurityCheckRegistry {
   constructor() {
     /** @type {Map<string, import('./protocol/check.mjs').SecurityCheck>} */
     this.checks = new Map();
+    /** @type {object|null} 可选运行配置（见 config.mjs / README 配置节） */
+    this.config = null;
   }
 
   register(check) { this.checks.set(check.id, check); }
   registerAll(checks) { for (const check of checks) this.register(check); }
 
+  /**
+   * 注入运行配置（~/.dsh/security.json）：
+   * - enabled=false → 全部停用
+   * - checks.{ID}.enabled=false → 停用单个检查
+   * - severityThreshold → 低于阈值的失败降级为 skipped（不影响退出码）
+   */
+  setConfig(config) {
+    this.config = config && typeof config === 'object' ? config : null;
+  }
+
+  /**
+   * Plugin Interface：从 <securityDir>/checks.d/*.json 加载外部注册的检查。
+   * 注意：JSON 中的 command 会被执行——只应加载用户自己放置的文件，
+   * 且目录由调用方显式传入（框架不会默认扫描任何位置）。
+   */
   loadExternalChecks(securityDir) {
     const checksDir = join(securityDir, 'checks.d');
     if (!existsSync(checksDir)) return;
@@ -27,17 +46,20 @@ export class SecurityCheckRegistry {
         const reg = JSON.parse(readFileSync(join(checksDir, file), 'utf8'));
         if (reg.checks && Array.isArray(reg.checks)) {
           for (const ext of reg.checks) {
+            if (!ext || !ext.id || !ext.command) continue;
             this.register({
-              id: ext.id, name: ext.name, severity: ext.severity, phase: ext.phase,
-              description: ext.description, src: 'external', source: reg.source,
+              id: ext.id, name: ext.name || ext.id, severity: ext.severity || 'medium',
+              phase: ext.phase || 'post-install',
+              description: ext.description || `External check (${reg.source || file})`,
+              src: 'external', source: reg.source || file,
               runner: async () => {
                 const { execSync } = await import('node:child_process');
                 try {
                   const output = execSync(ext.command, { encoding: 'utf8', timeout: 30000 });
                   const result = JSON.parse(output);
-                  return { id: ext.id, ok: result.ok ?? true, severity: ext.severity, detail: result.detail || 'External check completed', fix: result.fix, references: result.references };
+                  return { id: ext.id, ok: result.ok ?? true, severity: ext.severity || 'medium', detail: result.detail || 'External check completed', fix: result.fix, references: result.references };
                 } catch (e) {
-                  return { id: ext.id, ok: false, severity: ext.severity, detail: `External check failed: ${e.message}` };
+                  return { id: ext.id, ok: false, severity: ext.severity || 'medium', detail: `External check failed: ${e.message}` };
                 }
               },
             });
@@ -56,7 +78,18 @@ export class SecurityCheckRegistry {
   }
 
   async runAll(contextFn, phase = null) {
-    const checks = phase ? this.getByPhase(phase) : [...this.checks.values()];
+    let checks = phase ? this.getByPhase(phase) : [...this.checks.values()];
+
+    // 应用配置过滤（未 setConfig 时全部启用）
+    const cfg = this.config;
+    if (cfg && cfg.enabled === false) {
+      checks = [];
+    } else if (cfg && cfg.checks) {
+      checks = checks.filter(c => !(cfg.checks[c.id] && cfg.checks[c.id].enabled === false));
+    }
+    const threshold = cfg && cfg.severityThreshold && VALID_SEVERITIES.includes(cfg.severityThreshold)
+      ? cfg.severityThreshold : null;
+
     const results = [];
     for (const check of checks) {
       try {
@@ -67,20 +100,34 @@ export class SecurityCheckRegistry {
         results.push({ id: check.id, ok: false, severity: check.severity, detail: `Check execution failed: ${e.message}` });
       }
     }
-    const summary = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+
+    // severityThreshold：低于阈值的失败降级为 skip（保留原因），不进失败统计与退出码
+    const finalResults = results.map((r) => {
+      if (r.ok || r.skipped || !threshold) return r;
+      const sev = VALID_SEVERITIES.includes(r.severity) ? r.severity : 'medium';
+      if (severityGte(threshold, sev)) {
+        return { ...r, ok: true, skipped: true, detail: `${r.detail}\n[severityThreshold=${threshold}：低于阈值，已降级为 skip]` };
+      }
+      return r;
+    });
+
+    const summary = { critical: 0, high: 0, medium: 0, low: 0, info: 0, skipped: 0 };
     const failedSeverities = [];
-    for (const r of results) {
-      if (!r.ok && summary[r.severity] !== undefined) {
-        summary[r.severity]++;
-        failedSeverities.push(r.severity);
+    for (const r of finalResults) {
+      if (r.skipped) { summary.skipped++; continue; }
+      if (!r.ok) {
+        // 无效 severity 的失败按 medium 计，避免静默丢失退出码信号
+        const sev = VALID_SEVERITIES.includes(r.severity) ? r.severity : 'medium';
+        summary[sev]++;
+        failedSeverities.push(sev);
       }
     }
     const exitCode = failedSeverities.length > 0 ? severityToExitCode[maxSeverity(failedSeverities)] : 0;
-    return { results, exitCode, summary };
+    return { results: finalResults, exitCode, summary };
   }
 }
 
-export async function createDefaultRegistry(loadExternal = true) {
+export async function createDefaultRegistry(loadExternal = true, options = {}) {
   const registry = new SecurityCheckRegistry();
   const modules = await Promise.all([
     import('./checks/sp1-dependency-audit.mjs'),
@@ -109,8 +156,13 @@ export async function createDefaultRegistry(loadExternal = true) {
     }
   }
 
-  // 加载外部集成
-  if (loadExternal) {
+  // Plugin Interface：仅在调用方显式给出目录时启用（安全考虑，不默认扫描）
+  const extDir = typeof loadExternal === 'object' ? loadExternal.externalChecksDir : options.externalChecksDir;
+  if (extDir) registry.loadExternalChecks(extDir);
+
+  // 自动探测外部工具集成（dsh-poison-guard 等）
+  const wantIntegrations = typeof loadExternal === 'object' ? (loadExternal.integrations !== false) : loadExternal;
+  if (wantIntegrations) {
     try {
       const { getAvailableIntegrations } = await import('./integrations/index.mjs');
       const integrations = await getAvailableIntegrations();

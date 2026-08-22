@@ -12,7 +12,8 @@
 // Protocol
 export { Severity, severityToExitCode, severityGte, maxSeverity } from './protocol/severity.mjs';
 export { CheckPhase } from './protocol/phase.mjs';
-export { createResult, pass, fail } from './protocol/check.mjs';
+export { createResult, pass, fail, skip } from './protocol/check.mjs';
+export { isZstdFile, scanSessionLines } from './session-reader.mjs';
 
 // Layer 1: Static Checks
 export { sp1Check } from './checks/sp1-dependency-audit.mjs';

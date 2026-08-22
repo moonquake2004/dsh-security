@@ -75,7 +75,9 @@ function scanDirectory(dir, profileDir, extensions = ['.yml', '.yaml', '.json', 
 
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    // 点文件默认跳过，但 .env / *.env 是密钥重灾区，必须扫描（复审修复：此前 .env 永不被扫）
+    const isEnvFile = entry.name === '.env' || entry.name.endsWith('.env');
+    if ((entry.name.startsWith('.') && !isEnvFile) || entry.name === 'node_modules') continue;
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       findings.push(...scanDirectory(fullPath, profileDir, extensions));
