@@ -13,7 +13,7 @@ DSH 生态统一安全检查层：任何工具都能贡献检查，用户一键�
 | 层 | 检查 | 输入 | 说明 |
 |---|---|---|---|
 | Layer 0 协议 | Severity / CheckPhase / SecurityCheck 接口 | — | 5 级严重度 × 4 阶段；`pass/fail/skip` 三种结果 |
-| Layer 1 静态 | SP1-SP6, SS1-SS3 | profile 目录 / 会话日志文件 | 安装前后审计 |
+| Layer 1 静态 | SP1-SP7, SS1-SS3 | profile 目录 / 会话日志文件 | 安装前后审计 |
 | Layer 2 运行时 | SR1-SR4 | 会话日志文件（明文或 zstd） | 基于会话日志分析 |
 | Layer 3 生命周期 | SL1-SL4 | profile 目录 + npm registry | 版本/integrity/信誉/兼容 |
 | 外部集成 | EXT-PG-1 / EXT-SA-1 / EXT-ECO-1 / EXT-RED-1 | 各外部工具 | PATH 探测，缺失即 skip |
@@ -58,5 +58,6 @@ doctor 的 `--security` 是本框架的主要宿主。contextFn 按 check 分发
 ## 已知边界（非 bug，记录取舍）
 
 - SP1 的 npm audit 在 pnpm profile 上因无 package-lock 通常走跳过分支（detail 如实说明）；pnpm 侧漏洞覆盖由 SL1 lockfile-integrity + SP6 OSV 补位。
+- SP7（client 语法预检，#2752 补充案例）：对已装 DSH 插件包（package.json 含 `dsh` 字段门控，避免误扫普通依赖）的 client 产物（`client/*.js|mjs`、`lib/client.js`、根级 `client.js`）逐个执行 `node --check`（Node ≥22 自动探测 ESM/CJS）。解析失败 = boot 前可断定的白屏源 → HIGH。上限：每包 10 文件、60 插件包、全局 200 文件；上限只约束真插件，普通依赖不占额。
 - SR 系列是正则启发式，存在误报可能；只扫 tool/call（SR3 凭据类额外扫 result），阈值偏保守。
 - EXT-ECO-1 的关键词计数（breaking/critical 提及数）是弱信号，固定 LOW 级提示性输出。

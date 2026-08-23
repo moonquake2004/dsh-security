@@ -5,6 +5,7 @@ export { sp3Check } from './sp3-sandbox-consistency.mjs';
 export { sp4Check } from './sp4-entry-poison.mjs';
 export { sp5Check } from './sp5-permission-model.mjs';
 export { sp6Check } from './sp6-vuln-match.mjs';
+export { sp7Check } from './sp7-client-syntax.mjs';
 
 // Layer 2: Runtime Checks
 export { sr1Check } from './sr1-sandbox-violation.mjs';
