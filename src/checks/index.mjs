@@ -8,6 +8,7 @@ export { sp6Check } from './sp6-vuln-match.mjs';
 export { sp7Check } from './sp7-client-syntax.mjs';
 export { sp8Check } from './sp8-dist-tag-health.mjs';
 export { sp9Check } from './sp9-dual-instance-guard.mjs';
+export { sp10Check } from './sp10-poison-pattern.mjs';
 
 // Layer 2: Runtime Checks
 export { sr1Check } from './sr1-sandbox-violation.mjs';

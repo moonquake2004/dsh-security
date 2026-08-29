@@ -13,7 +13,7 @@ DSH 生态统一安全检查层：任何工具都能贡献检查，用户一键�
 | 层 | 检查 | 输入 | 说明 |
 |---|---|---|---|
 | Layer 0 协议 | Severity / CheckPhase / SecurityCheck 接口 | — | 5 级严重度 × 4 阶段；`pass/fail/skip` 三种结果 |
-| Layer 1 静态 | SP1-SP9, SS1-SS4 | profile 目录 / 会话日志文件 / npm registry | 安装前后审计 |
+| Layer 1 静态 | SP1-SP10, SS1-SS4 | profile 目录 / 会话日志文件 / npm registry | 安装前后审计 |
 | Layer 2 运行时 | SR1-SR4 | 会话日志文件（明文或 zstd） | 基于会话日志分析 |
 | Layer 3 生命周期 | SL1-SL4 | profile 目录 + npm registry | 版本/integrity/信誉/兼容 |
 | 外部集成 | EXT-PG-1 / EXT-SA-1 / EXT-ECO-1 / EXT-RED-1 | 各外部工具 | PATH 探测，缺失即 skip |

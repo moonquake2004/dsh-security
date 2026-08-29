@@ -1,7 +1,7 @@
 /**
  * DSH Security Framework — 统一安全检查框架
  *
- * 为 DSH 生态提供全生命周期安全检查（21 个检查项，4 层架构）。
+ * 为 DSH 生态提供全生命周期安全检查（22 个检查项，4 层架构）。
  *
  * @example
  * import { createDefaultRegistry } from '@moonquake2004/dsh-security';
@@ -25,6 +25,7 @@ export { sp6Check } from './checks/sp6-vuln-match.mjs';
 export { sp7Check } from './checks/sp7-client-syntax.mjs';
 export { sp8Check } from './checks/sp8-dist-tag-health.mjs';
 export { sp9Check } from './checks/sp9-dual-instance-guard.mjs';
+export { sp10Check } from './checks/sp10-poison-pattern.mjs';
 
 // Layer 2: Runtime Checks
 export { sr1Check } from './checks/sr1-sandbox-violation.mjs';
