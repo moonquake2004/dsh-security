@@ -74,7 +74,7 @@ export async function run(sessionFile) {
   for (const f of findings) { if (!byType[f.type]) byType[f.type] = 0; byType[f.type]++; }
   const summary = Object.entries(byType).map(([t, c]) => `${t}: ${c}`).join(', ');
   const details = findings.slice(0, 10).map(f => `行${f.line} — ${f.type}: ${f.snippet}`).join('\n');
-  return fail(id, Severity.MEDIUM, `检测到 ${findings.length} 个 PII 暴露（${summary}）：\n${details}`, '使用 dsh-redact 脱敏后再分享会话日志');
+  return fail(id, Severity.MEDIUM, `检测到 ${findings.length} 个 PII 暴露（${summary}）：\n${details}`, '分享会话日志前用 zoahdev/dsh-redact（github.com/zoahdev/dsh-redact）脱敏，或手动删除含 PII 的行');
 }
 
 export const ss2Check = { id: 'SS2', name: 'pii-exposure', severity: Severity.MEDIUM, phase: CheckPhase.POST_INSTALL, description: 'PII 数据暴露检测', src: 'builtin', runner: (f) => run(f) };

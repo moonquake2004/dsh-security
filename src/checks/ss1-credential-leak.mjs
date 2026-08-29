@@ -124,7 +124,7 @@ export async function run(sessionFile) {
     .map(f => `行 ${f.line} — ${f.type}（${f.snippet}）`)
     .join('\n');
 
-  const fix = '使用 dsh-redact 脱敏后再分享会话日志：npx dsh-redact <session.jsonl> --out redacted.jsonl';
+  const fix = '轮换泄露的密钥（不可逆），然后清理会话日志：可用 zoahdev/dsh-redact（GitHub: github.com/zoahdev/dsh-redact）或手动删除含密钥的行';
 
   return fail(id, Severity.CRITICAL, `检测到 ${findings.length} 个凭据泄露（${summary}）：\n${details}`, fix, ['#962']);
 }

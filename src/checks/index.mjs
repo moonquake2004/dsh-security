@@ -25,3 +25,4 @@ export { sl4Check } from './sl4-release-compat.mjs';
 export { ss1Check } from './ss1-credential-leak.mjs';
 export { ss2Check } from './ss2-pii-exposure.mjs';
 export { ss3Check } from './ss3-sensitive-output.mjs';
+export { ss4Check } from './ss4-session-integrity.mjs';

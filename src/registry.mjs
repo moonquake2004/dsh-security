@@ -147,6 +147,7 @@ export async function createDefaultRegistry(loadExternal = true, options = {}) {
     import('./checks/ss1-credential-leak.mjs'),
     import('./checks/ss2-pii-exposure.mjs'),
     import('./checks/ss3-sensitive-output.mjs'),
+    import('./checks/ss4-session-integrity.mjs'),
     import('./checks/sp7-client-syntax.mjs'),
     import('./checks/sp8-dist-tag-health.mjs'),
     import('./checks/sp9-dual-instance-guard.mjs'),
