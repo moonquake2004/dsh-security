@@ -149,6 +149,7 @@ export async function createDefaultRegistry(loadExternal = true, options = {}) {
     import('./checks/ss3-sensitive-output.mjs'),
     import('./checks/sp7-client-syntax.mjs'),
     import('./checks/sp8-dist-tag-health.mjs'),
+    import('./checks/sp9-dual-instance-guard.mjs'),
   ]);
   for (const mod of modules) {
     for (const val of Object.values(mod)) {

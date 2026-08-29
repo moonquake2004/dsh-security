@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@moonquake2004/dsh-security)](https://www.npmjs.com/package/@moonquake2004/dsh-security)
-[![Tests](https://img.shields.io/badge/tests-80%2F80%20passing-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-86%2F86%20passing-brightgreen)](#)
 
-**DSH 生态统一安全检查框架** — 覆盖插件全生命周期（发现→安装→运行→更新→退役），19 个内置检查 + 4 个外部工具集成。
+**DSH 生态统一安全检查框架** — 覆盖插件全生命周期（发现→安装→运行→更新→退役），20 个内置检查 + 4 个外部工具集成。
 
 > Community security tool. Not an official DeepSeek project.
 
@@ -76,6 +76,7 @@ dsh-security 的目标：**建立 DSH 生态的统一安全检查层**，让任�
 │  SP6: 已知漏洞匹配 (OSV/CVE/GHSA)                        │
 │  SP7: client 产物语法预检 (#2752 白屏源 boot 前拦截)      │
 │  SP8: dist-tag 异常检测 (#2763 broken latest)            │
+│  SP9: CLI 核心包泄漏检测 (#4640 symbol 分裂)              │
 │  SS1: 凭据泄露检测 (会话日志)                             │
 │  SS2: PII 数据暴露检测                                    │
 │  SS3: 插件输出敏感数据检测                                │
@@ -251,7 +252,7 @@ node --test test/*.mjs
 dsh-security/
 ├── src/
 │   ├── protocol/          # Layer 0: Check Protocol
-│   ├── checks/            # 19 个内置检查
+│   ├── checks/            # 20 个内置检查
 │   ├── integrations/      # 4 个外部工具集成
 │   ├── session-reader.mjs # 会话日志读取（明文 + zstd）
 │   ├── registry.mjs       # Check Registry（支持 setConfig 注入配置）

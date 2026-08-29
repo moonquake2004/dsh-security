@@ -13,7 +13,7 @@ DSH 生态统一安全检查层：任何工具都能贡献检查，用户一键�
 | 层 | 检查 | 输入 | 说明 |
 |---|---|---|---|
 | Layer 0 协议 | Severity / CheckPhase / SecurityCheck 接口 | — | 5 级严重度 × 4 阶段；`pass/fail/skip` 三种结果 |
-| Layer 1 静态 | SP1-SP8, SS1-SS3 | profile 目录 / 会话日志文件 / npm registry | 安装前后审计 |
+| Layer 1 静态 | SP1-SP9, SS1-SS3 | profile 目录 / 会话日志文件 / npm registry | 安装前后审计 |
 | Layer 2 运行时 | SR1-SR4 | 会话日志文件（明文或 zstd） | 基于会话日志分析 |
 | Layer 3 生命周期 | SL1-SL4 | profile 目录 + npm registry | 版本/integrity/信誉/兼容 |
 | 外部集成 | EXT-PG-1 / EXT-SA-1 / EXT-ECO-1 / EXT-RED-1 | 各外部工具 | PATH 探测，缺失即 skip |
@@ -60,5 +60,6 @@ doctor 的 `--security` 是本框架的主要宿主。contextFn 按 check 分发
 - SP1 的 npm audit 在 pnpm profile 上因无 package-lock 通常走跳过分支（detail 如实说明）；pnpm 侧漏洞覆盖由 SL1 lockfile-integrity + SP6 OSV 补位。
 - SP7（client 语法预检，#2752 补充案例）：对已装 DSH 插件包（package.json 含 `dsh` 字段门控，避免误扫普通依赖）的 client 产物（`client/*.js|mjs`、`lib/client.js`、根级 `client.js`）逐个执行 `node --check`（Node ≥22 自动探测 ESM/CJS）。解析失败 = boot 前可断定的白屏源 → HIGH。上限：每包 10 文件、60 插件包、全局 200 文件；上限只约束真插件，普通依赖不占额。
 - SP8（dist-tag 健康，#2763 broken latest）：对已装 DSH 插件的 peerDependencies 中引用的 `@deepseek-ai/dsh-*` 包，查询 npm registry 的 dist-tags.latest；若 latest 匹配 `0.0.1-rc.*`（#2763 的 broken 模式）→ HIGH。数据来源：zoahdev/dsh-ecosystem supply-chain-health 报告（325 插件中 79 受影响）。上限：60 插件包，每包去重查询。网络不可达→skip。
+- SP9（核心包泄漏，#4640 symbol 分裂）：扫描 profile/node_modules/@deepseek-ai/ 下是否存在 dsh-tools/dsh-agent-loop 等核心运行时包——它们应仅由 CLI 依赖树提供，出现在 profile 中即为双实例 symbol 分裂的直接前兆 → CRITICAL。客户端包（dsh-client-*）被插件合法引用，泄漏为 HIGH 非 CRITICAL。
 - SR 系列是正则启发式，存在误报可能；只扫 tool/call（SR3 凭据类额外扫 result），阈值偏保守。
 - EXT-ECO-1 的关键词计数（breaking/critical 提及数）是弱信号，固定 LOW 级提示性输出。
