@@ -1,30 +1,24 @@
 /**
  * dsh-poison-guard 集成
  *
- * 通过 Plugin Interface 注册投毒扫描检查。
- * 如果 dsh-poison-guard 已安装，自动集成到安全检查流程。
+ * 如果 dsh-poison-guard 已安装（PATH 中可执行），自动集成到安全检查流程。
+ * 复审修复：不再用 `npx 包名` 探测/执行；执行失败返回 skip 而不是伪装通过。
  */
 
-import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
+import { skip } from '../protocol/check.mjs';
 
 /**
  * 检测 dsh-poison-guard 是否可用
  */
 export function isAvailable() {
   try {
-    execSync('which dsh-poison-guard', { encoding: 'utf8', stdio: 'pipe' });
+    execFileSync('which', ['dsh-poison-guard'], { encoding: 'utf8', stdio: 'pipe' });
     return true;
   } catch {
-    // 也检查 npx 可用性
-    try {
-      execSync('npx dsh-poison-guard --version', { encoding: 'utf8', stdio: 'pipe', timeout: 10000 });
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
@@ -37,11 +31,11 @@ export async function runScan(targetPath) {
   const id = 'EXT-PG-1';
 
   if (!isAvailable()) {
-    return { id, ok: true, severity: Severity.HIGH, detail: 'dsh-poison-guard 未安装，跳过投毒扫描' };
+    return skip(id, Severity.HIGH, 'dsh-poison-guard 未安装，跳过投毒扫描');
   }
 
   try {
-    const output = execSync(`npx dsh-poison-guard scan "${targetPath}" --json`, {
+    const output = execFileSync('dsh-poison-guard', ['scan', String(targetPath), '--json'], {
       encoding: 'utf8',
       timeout: 60000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -64,7 +58,7 @@ export async function runScan(targetPath) {
       fix: '检查相关插件的源码，移除恶意代码',
     };
   } catch (e) {
-    return { id, ok: true, severity: Severity.HIGH, detail: `dsh-poison-guard 执行失败：${e.message.slice(0, 80)}` };
+    return skip(id, Severity.HIGH, `dsh-poison-guard 执行失败，跳过：${e.message.slice(0, 80)}`);
   }
 }
 

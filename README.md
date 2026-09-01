@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@moonquake2004/dsh-security)](https://www.npmjs.com/package/@moonquake2004/dsh-security)
-[![Tests](https://img.shields.io/badge/tests-56%2F56%20passing-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-106%2F106%20passing-brightgreen)](#)
 
-**DSH 生态统一安全检查框架** — 覆盖插件全生命周期（发现→安装→运行→更新→退役），17 个内置检查 + 4 个外部工具集成。
+**DSH 生态统一安全检查框架** — 覆盖插件全生命周期（发现→安装→运行→更新→退役），22 个内置检查 + 4 个外部工具集成。
 
 > Community security tool. Not an official DeepSeek project.
 
@@ -74,9 +74,14 @@ dsh-security 的目标：**建立 DSH 生态的统一安全检查层**，让任�
 │  SP4: 恶意 entry 注入检测                                 │
 │  SP5: 插件权限声明验证                                    │
 │  SP6: 已知漏洞匹配 (OSV/CVE/GHSA)                        │
+│  SP7: client 产物语法预检 (#2752 白屏源 boot 前拦截)      │
+│  SP8: dist-tag 异常检测 (#2763 broken latest)            │
+│  SP9: CLI 核心包泄漏检测 (#4640 symbol 分裂)              │
+│  SP10: 混淆投毒模式检测 (Buffer.from/atob/eval)          │
 │  SS1: 凭据泄露检测 (会话日志)                             │
 │  SS2: PII 数据暴露检测                                    │
 │  SS3: 插件输出敏感数据检测                                │
+│  SS4: 会话日志完整性校验 (截断JSON/孤儿tool-call)          │
 ├──────────────────────────────────────────────────────────┤
 │  Layer 2: Runtime Checks（运行时，基于会话日志）           │
 │  SR1: 沙箱逃逸检测 (#1769 mount remount 等)              │
@@ -141,8 +146,19 @@ const { results, exitCode, summary } = await registry.runAll(
   (check) => profileDir  // 为每个检查提供上下文
 );
 
-// summary: { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
-// exitCode: 0=通过, 1=有HIGH, 2=有CRITICAL
+// summary: { critical: 0, high: 0, medium: 0, low: 0, info: 0, skipped: 0 }
+// results 中 skipped=true 的项代表"因外部条件未真正执行"（离线、工具缺失等），
+// 不计入失败统计，也不影响 exitCode。
+// exitCode: 0=通过或只有 MEDIUM 及以下失败, 1=有HIGH, 2=有CRITICAL
+```
+
+### 配置注入（可选）
+
+```javascript
+import { createDefaultRegistry, loadConfig } from '@moonquake2004/dsh-security';
+
+const registry = await createDefaultRegistry();
+registry.setConfig(loadConfig()); // 读 ~/.dsh/security.json；不注入则全部启用
 ```
 
 ### 退出码含义
@@ -156,6 +172,8 @@ const { results, exitCode, summary } = await registry.runAll(
 ---
 
 ## 外部工具集成
+
+dsh-security 通过自动探测集成以下优秀开源项目。CLI 集成不会用 `npx` 触发未固定包的下载执行；一般工具从 `PATH` 探测，dsh-plugin-reducer 则解析当前项目显式安装的固定包。未安装时对应检查返回 skip 并注明原因，网络类数据源离线时同样 skip 而非谎报通过。
 
 dsh-security 通过 Plugin Interface 集成以下优秀开源项目：
 
@@ -204,19 +222,24 @@ SP6 检查通过 OSV API 查询 npm 包的已知漏洞（CVE/GHSA）。
 
 ## 配置
 
-创建 `~/.dsh/security.json` 自定义安全检查行为：
+创建 `~/.dsh/security.json` 自定义安全检查行为（需调用方注入 `registry.setConfig(loadConfig())` 才生效；未注入时全部检查启用）：
 
 ```json
 {
   "enabled": true,
   "checks": {
-    "SP1": { "enabled": true, "severity": "high" },
-    "SR1": { "enabled": false, "severity": "critical" }
+    "SP1": { "enabled": true },
+    "SR1": { "enabled": false }
   },
-  "severityThreshold": "medium",
-  "autoRedact": true
+  "severityThreshold": "medium"
 }
 ```
+
+- `enabled: false`：停用整个框架
+- `checks.{ID}.enabled: false`：停用单个检查
+- `severityThreshold`（`low`/`medium`/`high`）：低于阈值的失败降级为 skip，不进失败统计与退出码
+
+会话日志检查（SS1/SS2/SR1-SR4）支持 zstd 压缩的 `session.jsonl.zstd`，依赖系统 `zstd` 命令。
 
 ---
 
@@ -240,13 +263,14 @@ node --test test/*.mjs
 dsh-security/
 ├── src/
 │   ├── protocol/          # Layer 0: Check Protocol
-│   ├── checks/            # 17 个内置检查
+│   ├── checks/            # 22 个内置检查
 │   ├── integrations/      # 4 个外部工具集成
-│   ├── registry.mjs       # Check Registry
+│   ├── session-reader.mjs # 会话日志读取（明文 + zstd）
+│   ├── registry.mjs       # Check Registry（支持 setConfig 注入配置）
 │   ├── config.mjs         # 配置管理
 │   └── index.mjs          # 主入口
-├── test/                  # 50 个测试
-└── docs/plans/            # 设计文档
+├── test/                  # 测试
+└── docs/plans/design.md   # 设计文档
 ```
 
 ---

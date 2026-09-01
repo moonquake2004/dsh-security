@@ -11,8 +11,19 @@ import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
+import { skip } from '../protocol/check.mjs';
 
 const require = createRequire(import.meta.url);
+const SUPPORTED_REDUCER_VERSION = '0.3.1';
+
+function validateReducerInvocation(invocation) {
+  if (typeof invocation?.command !== 'string' || invocation.command.length === 0
+    || !Array.isArray(invocation?.prefixArgs) || invocation.prefixArgs.length === 0
+    || invocation.version !== SUPPORTED_REDUCER_VERSION) {
+    throw new Error(`installed dsh-plugin-reducer must be version ${SUPPORTED_REDUCER_VERSION}`);
+  }
+  return invocation;
+}
 
 function resolveReducerInvocation() {
   const libraryEntry = require.resolve('dsh-plugin-reducer');
@@ -31,11 +42,11 @@ function resolveReducerInvocation() {
     throw new Error(`dsh-plugin-reducer CLI entry is missing: ${binPath}`);
   }
 
-  return {
+  return validateReducerInvocation({
     command: process.execPath,
     prefixArgs: [binPath],
     version: manifest.version,
-  };
+  });
 }
 
 function profileContext(profileDir) {
@@ -61,7 +72,7 @@ function errorSummary(error) {
   return `${code}${message}`.slice(0, 160);
 }
 
-function parseEnvelope(stdout) {
+function parseEnvelope(stdout, expectedVersion) {
   if (typeof stdout !== 'string' || stdout.trim() === '') {
     throw new TypeError('dsh-plugin-reducer returned no JSON envelope');
   }
@@ -73,7 +84,9 @@ function parseEnvelope(stdout) {
     throw new TypeError('dsh-plugin-reducer returned invalid JSON');
   }
 
-  if (envelope?.schemaVersion !== 1 || envelope?.tool?.name !== 'dsh-plugin-reducer') {
+  if (envelope?.schemaVersion !== 1
+    || envelope?.tool?.name !== 'dsh-plugin-reducer'
+    || envelope?.tool?.version !== expectedVersion) {
     throw new TypeError('dsh-plugin-reducer returned an unsupported JSON envelope');
   }
   return envelope;
@@ -87,8 +100,8 @@ function envelopeError(envelope, status) {
 
 export function isAvailable(resolveReducer = resolveReducerInvocation) {
   try {
-    const invocation = resolveReducer();
-    return typeof invocation?.command === 'string' && Array.isArray(invocation?.prefixArgs);
+    validateReducerInvocation(resolveReducer());
+    return true;
   } catch {
     return false;
   }
@@ -97,8 +110,14 @@ export function isAvailable(resolveReducer = resolveReducerInvocation) {
 export async function runReducer(profileDir, probeType = 'web', options = {}) {
   const id = 'EXT-RED-1';
 
+  let invocation;
   try {
-    const invocation = (options.resolveReducer ?? resolveReducerInvocation)();
+    invocation = validateReducerInvocation((options.resolveReducer ?? resolveReducerInvocation)());
+  } catch (error) {
+    return skip(id, Severity.LOW, `dsh-plugin-reducer 未安装或无法解析，跳过故障最小化：${errorSummary(error)}`);
+  }
+
+  try {
     const { dshHome, profile } = profileContext(profileDir);
     const args = [
       ...invocation.prefixArgs,
@@ -123,7 +142,7 @@ export async function runReducer(profileDir, probeType = 'web', options = {}) {
     });
 
     if (execution.error) throw execution.error;
-    const envelope = parseEnvelope(execution.stdout);
+    const envelope = parseEnvelope(execution.stdout, invocation.version);
     if (execution.status !== 0 || envelope.ok !== true || envelope.operation !== 'reduce') {
       throw envelopeError(envelope, execution.status);
     }

@@ -1,6 +1,6 @@
 {
   "name": "@moonquake2004/dsh-security",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Unified security check framework for DeepSeek Harness ecosystem — covers the full plugin lifecycle (discovery → install → runtime → update → retirement)",
   "type": "module",
   "main": "src/index.mjs",

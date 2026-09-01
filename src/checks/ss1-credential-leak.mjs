@@ -1,19 +1,21 @@
 /**
  * SS1: Credential Leak — 会话日志凭据泄露检测
  *
- * 扫描 session.jsonl 中的敏感凭据（API key/token/私钥）。
- * 检查是否已通过 dsh-redact 脱敏。
+ * 扫描 session.jsonl（或 .zstd 压缩）中的敏感凭据（API key/token/私钥）。
+ *
+ * 复审修复：
+ * - snippet 不再回显凭据本体（旧实现输出前 20+后 4 字符，检测器自己泄露凭据）
+ * - 移除"前几行含 [REDACTED]/*** 即整体跳过"的弱启发（一行 markdown 分隔线就能让整个文件免检）
  *
  * Severity: CRITICAL
  * Phase: POST_INSTALL
  */
 
-import { readFileSync, existsSync } from 'node:fs';
-import { createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
+import { scanSessionLines } from '../session-reader.mjs';
 
 /** 凭据模式 */
 const CREDENTIAL_PATTERNS = [
@@ -28,13 +30,18 @@ const CREDENTIAL_PATTERNS = [
   { name: 'Basic Auth', regex: /Basic\s+[a-zA-Z0-9+/=]{20,}/g },
 ];
 
+/** 掩码：只保留极短前缀 + 长度信息，绝不回显凭据内容 */
+function maskSecret(s) {
+  if (s.length <= 8) return `***(${s.length} chars)`;
+  return `${s.slice(0, 4)}***(${s.length} chars)`;
+}
+
 /**
  * 从一行 JSONL 中提取文本内容
  */
 function extractTextFromLine(line) {
   try {
     const event = JSON.parse(line);
-    // 递归提取所有字符串值
     const texts = [];
     function extract(obj) {
       if (typeof obj === 'string') {
@@ -52,9 +59,6 @@ function extractTextFromLine(line) {
   }
 }
 
-/**
- * 扫描单行中的凭据
- */
 function scanLine(text) {
   const findings = [];
   for (const pattern of CREDENTIAL_PATTERNS) {
@@ -62,7 +66,7 @@ function scanLine(text) {
     for (const match of matches) {
       findings.push({
         type: pattern.name,
-        snippet: match[0].slice(0, 20) + '...' + match[0].slice(-4),
+        snippet: maskSecret(match[0]),
       });
     }
   }
@@ -77,49 +81,27 @@ function scanLine(text) {
 export async function run(sessionFile) {
   const id = 'SS1';
 
-  if (!existsSync(sessionFile)) {
+  if (!sessionFile || !existsSync(sessionFile)) {
     return pass(id, Severity.CRITICAL, '会话文件不存在，跳过检查');
   }
-
-  // 检查是否是 zstd 压缩的（需要先解压）
-  if (sessionFile.endsWith('.zstd')) {
-    return pass(id, Severity.CRITICAL, 'zstd 压缩的会话文件需先解压再检查（或使用 dsh-redact 直接处理）');
-  }
-
-  // 检查是否已通过 dsh-redact 脱敏
-  try {
-    const firstLines = createReadStream(sessionFile, { encoding: 'utf8' });
-    const rl = createInterface({ input: firstLines, crlfDelay: Infinity });
-    let alreadyRedacted = false;
-    let checkCount = 0;
-    for await (const line of rl) {
-      if (checkCount++ > 5) break;
-      if (line.includes('[REDACTED]') || line.includes('[redacted]') || line.includes('***')) {
-        alreadyRedacted = true;
-        break;
-      }
-    }
-    firstLines.destroy();
-    if (alreadyRedacted) {
-      return pass(id, Severity.CRITICAL, '会话文件似乎已通过 dsh-redact 脱敏');
-    }
-  } catch { /* 继续正常检查 */ }
 
   const findings = [];
   let lineCount = 0;
 
-  const fileStream = createReadStream(sessionFile, { encoding: 'utf8' });
-  const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
-    lineCount++;
-    if (!line.trim()) continue;
-    const text = extractTextFromLine(line);
-    if (!text) continue;
-    const lineFindings = scanLine(text);
-    for (const f of lineFindings) {
-      findings.push({ ...f, line: lineCount });
+  try {
+    lineCount = await scanSessionLines(sessionFile, (line, lineNo) => {
+      if (!line.trim()) return;
+      const text = extractTextFromLine(line);
+      if (!text) return;
+      for (const f of scanLine(text)) {
+        findings.push({ ...f, line: lineNo });
+      }
+    });
+  } catch (e) {
+    if (e.code === 'ZSTD_UNAVAILABLE') {
+      return skip(id, Severity.CRITICAL, 'zstd 命令不可用，无法解压压缩会话日志，跳过凭据泄露检测');
     }
+    throw e;
   }
 
   if (findings.length === 0) {
@@ -142,7 +124,7 @@ export async function run(sessionFile) {
     .map(f => `行 ${f.line} — ${f.type}（${f.snippet}）`)
     .join('\n');
 
-  const fix = '使用 dsh-redact 脱敏后再分享会话日志：npx dsh-redact <session.jsonl> --out redacted.jsonl';
+  const fix = '轮换泄露的密钥（不可逆），然后清理会话日志：可用 zoahdev/dsh-redact（GitHub: github.com/zoahdev/dsh-redact）或手动删除含密钥的行';
 
   return fail(id, Severity.CRITICAL, `检测到 ${findings.length} 个凭据泄露（${summary}）：\n${details}`, fix, ['#962']);
 }
@@ -152,7 +134,7 @@ export const ss1Check = {
   name: 'credential-leak',
   severity: Severity.CRITICAL,
   phase: CheckPhase.POST_INSTALL,
-  description: '会话日志凭据泄露检测',
+  description: '会话日志凭据泄露检测（支持 zstd，结果自动掩码）',
   src: 'builtin',
   runner: (sessionFile) => run(sessionFile),
 };

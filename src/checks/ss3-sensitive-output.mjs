@@ -10,11 +10,11 @@
  * Phase: POST_INSTALL
  */
 
-import { existsSync, createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
-import { pass, fail } from '../protocol/check.mjs';
+import { pass, fail, skip } from '../protocol/check.mjs';
+import { scanSessionLines } from '../session-reader.mjs';
 
 const SENSITIVE_OUTPUT_PATTERNS = [
   { name: 'env dump', regex: /(?:process\.env|ENV|env)\s*[=:]\s*\{[^}]{50,}/gi, severity: 'medium' },
@@ -35,23 +35,26 @@ function extractToolOutputs(line) {
 export async function run(sessionFile) {
   const id = 'SS3';
   if (!sessionFile || !existsSync(sessionFile)) return pass(id, Severity.LOW, '无会话文件，跳过敏感输出检测');
-  if (sessionFile.endsWith('.zstd')) return pass(id, Severity.LOW, 'zstd 文件需先解压');
 
   const findings = [];
   let lineCount = 0;
-  const rl = createInterface({ input: createReadStream(sessionFile, { encoding: 'utf8' }), crlfDelay: Infinity });
 
-  for await (const line of rl) {
-    lineCount++;
-    if (!line.trim()) continue;
-    const outputs = extractToolOutputs(line);
-    for (const output of outputs) {
-      for (const pattern of SENSITIVE_OUTPUT_PATTERNS) {
-        for (const match of output.matchAll(new RegExp(pattern.regex.source, 'g'))) {
-          findings.push({ type: pattern.name, severity: pattern.severity, line: lineCount, snippet: match[0].slice(0, 60) });
+  try {
+    lineCount = await scanSessionLines(sessionFile, (line, lineNo) => {
+      if (!line.trim()) return;
+      for (const output of extractToolOutputs(line)) {
+        for (const pattern of SENSITIVE_OUTPUT_PATTERNS) {
+          for (const match of output.matchAll(new RegExp(pattern.regex.source, 'g'))) {
+            findings.push({ type: pattern.name, severity: pattern.severity, line: lineNo, snippet: match[0].slice(0, 60) });
+          }
         }
       }
+    });
+  } catch (e) {
+    if (e.code === 'ZSTD_UNAVAILABLE') {
+      return skip(id, Severity.LOW, 'zstd 命令不可用，无法解压压缩会话日志，跳过敏感输出检测');
     }
+    throw e;
   }
 
   if (findings.length === 0) return pass(id, Severity.LOW, `扫描 ${lineCount} 行，未检测到敏感输出`);

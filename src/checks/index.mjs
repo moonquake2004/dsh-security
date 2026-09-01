@@ -5,6 +5,10 @@ export { sp3Check } from './sp3-sandbox-consistency.mjs';
 export { sp4Check } from './sp4-entry-poison.mjs';
 export { sp5Check } from './sp5-permission-model.mjs';
 export { sp6Check } from './sp6-vuln-match.mjs';
+export { sp7Check } from './sp7-client-syntax.mjs';
+export { sp8Check } from './sp8-dist-tag-health.mjs';
+export { sp9Check } from './sp9-dual-instance-guard.mjs';
+export { sp10Check } from './sp10-poison-pattern.mjs';
 
 // Layer 2: Runtime Checks
 export { sr1Check } from './sr1-sandbox-violation.mjs';
@@ -22,3 +26,4 @@ export { sl4Check } from './sl4-release-compat.mjs';
 export { ss1Check } from './ss1-credential-leak.mjs';
 export { ss2Check } from './ss2-pii-exposure.mjs';
 export { ss3Check } from './ss3-sensitive-output.mjs';
+export { ss4Check } from './ss4-session-integrity.mjs';
