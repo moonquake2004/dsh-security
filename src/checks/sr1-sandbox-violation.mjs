@@ -16,9 +16,12 @@ import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
-import { scanSessionLines } from '../session-reader.mjs';
+import { scanSessionLines, extractEvent, isShellTool } from '../session-reader.mjs';
 
 /** 已知逃逸模式（#1769 及同类） */
+/** 下载即执行：curl/wget 管道进解释器 —— 与逃逸同级的高信号规则（其余系统资源规则不算发现） */
+const HIGH_SIGNAL_DOWNLOAD = { name: 'curl/wget to shell', regex: /(?:curl|wget)\s+[^\n|"']{1,160}\|\s*(?:bash|sh|zsh|node)\b/gi, severity: 'critical', ref: null };
+
 const ESCAPE_PATTERNS = [
   { name: 'mount remount', regex: /mount\s+.*-o\s+remount.*rw/gi, severity: 'critical', ref: '#1769' },
   { name: 'chroot escape', regex: /chroot\s+\//gi, severity: 'critical', ref: null },
@@ -50,24 +53,10 @@ const WORKSPACE_ESCAPE_PATTERNS = [
  */
 function extractToolCalls(line) {
   try {
-    const event = JSON.parse(line);
-    if (event.type !== 'tool/call') return [];
-
-    const data = event.data || {};
-    const name = data.name || data.tool || '';
-    const args = data.args || data.input || {};
-    const text = typeof args === 'string' ? args : JSON.stringify(args);
-
-    return [{
-      type: event.type,
-      name,
-      text,
-      seq: event.seq,
-      turn: event.turn,
-    }];
-  } catch {
-    return [];
-  }
+    const e = extractEvent(JSON.parse(line));
+    if (e.kind === 'other') return [];
+    return [{ type: e.type, name: e.name || '', text: e.argsText || e.resultText || '', seq: e.seq, turn: e.turn, callId: e.callId }];
+  } catch { return []; }
 }
 
 /**
@@ -99,10 +88,11 @@ export async function run(sessionFile) {
   const id = 'SR1';
 
   if (!sessionFile || !existsSync(sessionFile)) {
-    return pass(id, Severity.CRITICAL, '无会话日志，跳过运行时安全检查');
+    return skip(id, Severity.CRITICAL, '无会话日志，跳过运行时安全检查');
   }
 
   const findings = [];
+  let contextualCount = 0;
   let lineCount = 0;
 
   try {
@@ -110,11 +100,20 @@ export async function run(sessionFile) {
       if (!line.trim()) return;
       const calls = extractToolCalls(line);
       for (const call of calls) {
-        const allPatterns = [...ESCAPE_PATTERNS, ...SYSTEM_RESOURCE_PATTERNS, ...WORKSPACE_ESCAPE_PATTERNS];
-        const textFindings = scanPatterns(call.text, allPatterns);
-        for (const f of textFindings) {
+        // 只作用于命令执行类工具（#2026-09：文档工具里"引用"路径会被误判为逃逸行为）
+        if (!isShellTool(call.name, call.text)) continue;
+        // 只把"逃逸原语"计为发现（chroot/nsenter/unshare/remount、下载即执行、管道进 shell）。
+        // 其余规则（读 /etc、/proc、env dump、sudo、写 /tmp 或 home、提及 child_process）
+        // 在日常 agent 工作里普遍出现，静默计入 contextual 而**不抬严重级**（2026-09 实测：不区分会误报 361 处）。
+        const decisive = [...ESCAPE_PATTERNS, HIGH_SIGNAL_DOWNLOAD];
+        const contextual = [...SYSTEM_RESOURCE_PATTERNS, ...WORKSPACE_ESCAPE_PATTERNS];
+        const seenRules = new Set(); // 同一事件内同一规则只记一次（文本里重复提及不再放大计数）
+        for (const f of scanPatterns(call.text, decisive)) {
+          if (seenRules.has(f.type)) continue;
+          seenRules.add(f.type);
           findings.push({ ...f, line: lineNo, tool: call.name, seq: call.seq, turn: call.turn });
         }
+        for (const _ of scanPatterns(call.text, contextual)) contextualCount++;
       }
     });
   } catch (e) {

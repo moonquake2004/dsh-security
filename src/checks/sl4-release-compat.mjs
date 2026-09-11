@@ -57,6 +57,7 @@ function checkCompatibility(localVersion, distTags) {
       issues.push({
         type: 'latest-is-prerelease',
         severity: 'medium',
+        informational: true, // 全生态都在 rc 线上，这属常态描述而非兼容性问题（2026-09 审计结论）
         detail: `latest 标签指向预发布版本 ${distTags.latest}，可能不稳定`,
       });
     }
@@ -67,6 +68,7 @@ function checkCompatibility(localVersion, distTags) {
     issues.push({
       type: 'next-available',
       severity: 'low',
+      informational: true,
       detail: `有 next 标签 ${distTags.next} 可用（当前 latest: ${distTags.latest}）`,
     });
   }
@@ -140,17 +142,23 @@ export async function run(profileDir) {
     );
   }
 
-  const mediumIssues = allIssues.filter(i => i.severity === 'medium');
+  const material = allIssues.filter(i => !i.informational);
+  if (material.length === 0) {
+    return pass(id, Severity.LOW,
+      `验证 ${checked} 个包的发布兼容性，未发现兼容性问题`
+      + (allIssues.length ? `；另有 ${allIssues.length} 条常态提示（预发布 latest / next 可用）未计入` : ''));
+  }
+  const mediumIssues = material.filter(i => i.severity === 'medium');
   const overallSeverity = mediumIssues.length > 0 ? Severity.MEDIUM : Severity.LOW;
 
-  const details = allIssues
+  const details = material
     .map(i => `[${i.severity}] ${i.package} — ${i.type}: ${i.detail}`)
     .join('\n');
 
   const fix = '检查是否有重要更新需要应用，或确认当前版本满足需求';
 
   return fail(id, overallSeverity,
-    `检测到 ${allIssues.length} 个发布兼容性问题（${checked} 个包已验证）：\n${details}`,
+    `检测到 ${material.length} 个发布兼容性问题（${checked} 个包已验证）：\n${details}`,
     fix
   );
 }

@@ -19,9 +19,12 @@ import { scanSessionLines } from '../session-reader.mjs';
 
 const PII_PATTERNS = [
   { name: 'email', regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, severity: 'medium' },
-  { name: 'phone', regex: /(\+?86)?1[3-9]\d{9}/g, severity: 'medium' },
+  // 数字边界：否则 Unix 毫秒时间戳（1788769155230）的子串会被当成手机号（2026-09 实测误报）
+  { name: 'phone', regex: /(?<!\d)(?:\+?86)?1[3-9]\d{9}(?!\d)/g, severity: 'medium' },
   { name: 'ID card', regex: /[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]/g, severity: 'high' },
-  { name: 'IPv4', regex: /\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g, severity: 'low' },
+  // 裸 IPv4 → informational：会话文本里 IP 无处不在（文档举例、保留网段 198.18/203.0.113、版本号形态），
+  // 2026-09 实测全部命中都是这类。PII 的强信号是邮箱/手机/身份证/密钥，IP 不足以判定，仅计数提示。
+  { name: 'IPv4', regex: /\b(?!127\.|10\.|192\.168\.|0\.|169\.254\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d)\.|198\.18\.|198\.19\.|203\.0\.113\.|198\.51\.100\.|192\.0\.2\.)(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g, severity: 'low', informational: true },
 ];
 
 /** PII 掩码：保留类型可辨识度，不回显完整个人信息 */
@@ -49,6 +52,7 @@ export async function run(sessionFile) {
   if (!sessionFile || !existsSync(sessionFile)) return pass(id, Severity.MEDIUM, '无会话文件，跳过 PII 检测');
 
   const findings = [];
+  let informationalCount = 0;
   let lineCount = 0;
 
   try {
@@ -57,6 +61,7 @@ export async function run(sessionFile) {
       const text = extractTextFromLine(line);
       for (const pattern of PII_PATTERNS) {
         for (const match of text.matchAll(new RegExp(pattern.regex.source, 'g'))) {
+          if (pattern.informational) { informationalCount++; continue; }
           findings.push({ type: pattern.name, severity: pattern.severity, line: lineNo, snippet: maskPII(match[0]) });
         }
       }
@@ -68,7 +73,7 @@ export async function run(sessionFile) {
     throw e;
   }
 
-  if (findings.length === 0) return pass(id, Severity.MEDIUM, `扫描 ${lineCount} 行，未检测到 PII 暴露`);
+  if (findings.length === 0) return pass(id, Severity.MEDIUM, `扫描 ${lineCount} 行，未检测到 PII 暴露${informationalCount ? `（另有 ${informationalCount} 个裸 IP，弱信号未计入）` : ''}`);
 
   const byType = {};
   for (const f of findings) { if (!byType[f.type]) byType[f.type] = 0; byType[f.type]++; }

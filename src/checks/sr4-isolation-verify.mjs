@@ -13,14 +13,13 @@ import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
-import { scanSessionLines } from '../session-reader.mjs';
+import { scanSessionLines, extractEvent } from '../session-reader.mjs';
 
 function extractToolCalls(line) {
   try {
-    const event = JSON.parse(line);
-    if (event.type !== 'tool/call') return [];
-    const data = event.data || {};
-    return [{ name: data.name || data.tool || '', args: data.args || data.input || {}, seq: event.seq, turn: event.turn }];
+    const e = extractEvent(JSON.parse(line));
+    if (e.kind === 'other') return [];
+    return [{ name: e.name || '', args: e.argsText || '', seq: e.seq, turn: e.turn }];
   } catch { return []; }
 }
 

@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
-import { scanSessionLines } from '../session-reader.mjs';
+import { scanSessionLines, extractEvent, isShellTool } from '../session-reader.mjs';
 
 /** 凭据转发模式 */
 const CREDENTIAL_FORWARD_PATTERNS = [
@@ -37,18 +37,10 @@ const NETWORK_EXFIL_PATTERNS = [
  */
 function extractToolCalls(line) {
   try {
-    const event = JSON.parse(line);
-    if (event.type !== 'tool/call' && event.type !== 'tool/result') return [];
-
-    const data = event.data || {};
-    const name = data.name || data.tool || '';
-    const args = data.args || data.input || data.output || data.result || data.text || {};
-    const text = typeof args === 'string' ? args : JSON.stringify(args);
-
-    return [{ type: event.type, name, text, seq: event.seq, turn: event.turn }];
-  } catch {
-    return [];
-  }
+    const e = extractEvent(JSON.parse(line));
+    if (e.kind === 'other') return [];
+    return [{ type: e.type, name: e.name || '', text: e.argsText || e.resultText || '', seq: e.seq, turn: e.turn, callId: e.callId }];
+  } catch { return []; }
 }
 
 function scanPatterns(text, patterns) {
@@ -70,7 +62,7 @@ export async function run(sessionFile) {
   const id = 'SR3';
 
   if (!sessionFile || !existsSync(sessionFile)) {
-    return pass(id, Severity.HIGH, '无会话日志，跳过数据外泄检查');
+    return skip(id, Severity.HIGH, '无会话日志，跳过数据外泄检查');
   }
 
   const findings = [];

@@ -62,6 +62,7 @@ export function compareVersions(localPkg, registryInfo, localLockIntegrity = nul
     issues.push({
       type: 'version-mismatch',
       severity: 'medium',
+      informational: true, // 只是"不新鲜"，不是完整性/供应链风险 —— 不参与判定（2026-09 审计结论）
       detail: `本地版本 ${localVersion} ≠ registry latest ${latestVersion}`,
     });
   }
@@ -152,25 +153,29 @@ export async function run(profileDir) {
     return skip(id, Severity.HIGH, `${errors} 个包 registry 查询失败（离线或网络受限），跳过供应链验证`);
   }
 
-  if (allIssues.length === 0) {
+  const material = allIssues.filter(i => !i.informational); // 完整性类才是"问题"
+  const outdated = allIssues.filter(i => i.informational);
+
+  if (material.length === 0) {
     return pass(id, Severity.HIGH,
       `验证 ${checked} 个包的供应链完整性，未发现异常${errors > 0 ? `（${errors} 个包查询失败）` : ''}`
+      + (outdated.length ? `；另有 ${outdated.length} 个包版本落后于 registry latest（不新鲜，非完整性问题）` : '')
     );
   }
 
-  const criticalIssues = allIssues.filter(i => i.severity === 'critical');
-  const overallSeverity = criticalIssues.length > 0 ? Severity.CRITICAL : maxSeverity(allIssues.map(i => i.severity === 'critical' ? Severity.CRITICAL : i.severity === 'medium' ? Severity.MEDIUM : Severity.LOW));
+  const criticalIssues = material.filter(i => i.severity === 'critical');
+  const overallSeverity = criticalIssues.length > 0 ? Severity.CRITICAL : maxSeverity(material.map(i => i.severity === 'critical' ? Severity.CRITICAL : i.severity === 'medium' ? Severity.MEDIUM : Severity.LOW));
 
-  const details = allIssues
+  const details = material
     .map(i => `[${i.severity}] ${i.package} — ${i.type}: ${i.detail}`)
-    .join('\n');
+    .join('\n') + (outdated.length ? `\n（另有 ${outdated.length} 个包版本落后，未计入问题）` : '');
 
   const fix = criticalIssues.length > 0
     ? '检测到 integrity hash 不匹配，可能是包被篡改。立即重新安装受影响的包'
     : '部分包版本落后于 registry latest，建议更新';
 
   return fail(id, overallSeverity,
-    `检测到 ${allIssues.length} 个供应链问题（${checked} 个包已验证${errors > 0 ? `，${errors} 个查询失败` : ''}）：\n${details}`,
+    `检测到 ${material.length} 个供应链问题（${checked} 个包已验证${errors > 0 ? `，${errors} 个查询失败` : ''}）：\n${details}`,
     fix
   );
 }

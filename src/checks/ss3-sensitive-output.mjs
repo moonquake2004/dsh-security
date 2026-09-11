@@ -14,27 +14,28 @@ import { existsSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
-import { scanSessionLines } from '../session-reader.mjs';
+import { scanSessionLines, extractEvent } from '../session-reader.mjs';
 
+// 注意：原 'large file content'（readFileSync/cat + 500 字符）规则已移除——编码会话里
+// 任何含 readFileSync 的源码都会命中（2026-09 实测：9/9 命中全是源码本身），噪声无法收敛。
 const SENSITIVE_OUTPUT_PATTERNS = [
   { name: 'env dump', regex: /(?:process\.env|ENV|env)\s*[=:]\s*\{[^}]{50,}/gi, severity: 'medium' },
   { name: 'config dump', regex: /(?:config|settings|credentials)\s*[=:]\s*\{[^}]{100,}/gi, severity: 'medium' },
-  { name: 'large file content', regex: /(?:readFileSync|cat\s+)\S+[\s\S]{500,}/gi, severity: 'low' },
 ];
 
 function extractToolOutputs(line) {
+  // 注意：本检查的循环直接对返回值调用 matchAll，故这里返回**字符串数组**
   try {
-    const event = JSON.parse(line);
-    if (event.type !== 'tool/result') return [];
-    const data = event.data || {};
-    const output = data.output || data.result || data.text || '';
-    return [typeof output === 'string' ? output : JSON.stringify(output)];
+    const e = extractEvent(JSON.parse(line));
+    if (e.kind === 'other') return [];
+    const t = e.resultText || e.argsText || '';
+    return t ? [t] : [];
   } catch { return []; }
 }
 
 export async function run(sessionFile) {
   const id = 'SS3';
-  if (!sessionFile || !existsSync(sessionFile)) return pass(id, Severity.LOW, '无会话文件，跳过敏感输出检测');
+  if (!sessionFile || !existsSync(sessionFile)) return skip(id, Severity.LOW, '无会话文件，跳过敏感输出检测');
 
   const findings = [];
   let lineCount = 0;

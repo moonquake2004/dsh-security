@@ -18,7 +18,7 @@ import { existsSync, statSync } from 'node:fs';
 import { Severity } from '../protocol/severity.mjs';
 import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
-import { scanSessionLines } from '../session-reader.mjs';
+import { scanSessionLines, extractEvent } from '../session-reader.mjs';
 
 const MIN_LINES = 10;
 
@@ -39,7 +39,8 @@ export async function run(sessionFile) {
   let totalLines = 0;
   let invalidJson = 0;
   let firstInvalidLine = null;
-  const orphanCalls = new Map(); // callId → line number
+  const orphanCalls = new Map(); // callId → { line, turn }
+  let maxTurn = -1;
   let resultCount = 0;
 
   await scanSessionLines(sessionFile, (line, lineNum) => {
@@ -55,17 +56,15 @@ export async function run(sessionFile) {
       return; // 无法 parse 的行跳过后续检查
     }
 
-    // 2. tool/call 与 tool/result 配对检查
-    const type = parsed.type;
-    if (type === 'tool/call') {
-      const callId = parsed.data?.callId;
-      if (callId) orphanCalls.set(callId, lineNum);
-    } else if (type === 'tool/result') {
-      const callId = parsed.data?.callId;
-      if (callId) {
-        orphanCalls.delete(callId); // 配对成功
-        resultCount++;
-      }
+    // 2. tool/call 与 tool/result 配对检查（字段路径见 docs/session-shape-v3.md）
+    //    v3 中 tool/result 没有 data.callId，id 在 data.message.source.callId —— 旧写法导致 0 配对、
+    //    每个调用都被当成孤儿（2026-09 实测：健康会话被报 45 个孤儿）。
+    const ev = extractEvent(parsed);
+    // maxTurn 必须对**所有**事件更新（无 callId 的事件同样携带 turn），否则 in-flight 豁免判据失效
+    if (typeof ev.turn === 'number') maxTurn = Math.max(maxTurn, ev.turn);
+    if (ev.callId) {
+      if (ev.kind === 'call') orphanCalls.set(ev.callId, { line: lineNum, turn: ev.turn });
+      else if (ev.kind === 'result') { orphanCalls.delete(ev.callId); resultCount++; }
     }
   });
 
@@ -81,10 +80,13 @@ export async function run(sessionFile) {
   const issues = [];
   const refs = [];
 
-  // 汇总孤儿 tool/call
-  if (orphanCalls.size > 0) {
-    const samples = [...orphanCalls.entries()].slice(0, 5).map(([id, ln]) => `  行${ln}: callId=${id.slice(0, 16)}…`);
-    issues.push(`${orphanCalls.size} 个孤儿 tool/call（有调用无结果）：\n${samples.join('\n')}`);
+  // 汇总孤儿 tool/call —— 仅当该调用处在**已闭合的 turn** 中才算真孤儿。
+  // 活跃会话的最后一个 turn 天然可能有不配对的调用（正在执行 / 已中断），豁免之（对齐 dsh-doctor S1 的 in-flight 处理）。
+  const realOrphans = [...orphanCalls.entries()].filter(([, v]) => typeof v.turn === 'number' && v.turn < maxTurn);
+  const inflight = orphanCalls.size - realOrphans.length;
+  if (realOrphans.length > 0) {
+    const samples = realOrphans.slice(0, 5).map(([id, v]) => `  行${v.line}: callId=${id.slice(0, 16)}…`);
+    issues.push(`${realOrphans.length} 个孤儿 tool/call（有调用无结果）：\n${samples.join('\n')}`);
     refs.push('#3234');
   }
 
@@ -96,7 +98,7 @@ export async function run(sessionFile) {
 
   if (issues.length === 0) {
     return pass(id, Severity.HIGH,
-      `会话日志完整性通过：${totalLines} 行，JSON 全有效，${resultCount} 个 tool/result 均已配对`);
+      `会话日志完整性通过：${totalLines} 行，JSON 全有效，${resultCount} 个 tool/result 已配对${inflight > 0 ? `（尾部 in-flight 未配对 ${inflight} 个，属正常）` : ''}`);
   }
 
   return fail(id, Severity.HIGH,

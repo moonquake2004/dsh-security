@@ -116,6 +116,22 @@ export async function run(profileDir) {
       `dist-tag 健康检查通过：${plugins.length} 个插件 / ${cache.size} 个 @deepseek-ai/dsh-* 包的 latest 均正常`);
   }
 
+  // 影响门控（2026-09 审计）：0.1.5 起 profile **不再从 registry 安装** @deepseek-ai/* ——
+  // 实例来自 CLI 闭包（~/.dsh/profiles/node_modules/@deepseek-ai 是 dsh 自建的 symlink 镜像）。
+  // 此时 latest 卡在旧版不会影响已装实例，故只在 profile 里存在**真实目录**安装时才判为问题。
+  let installsFromRegistry = false;
+  try {
+    for (const e of readdirSync(join(profileDir, 'node_modules', '@deepseek-ai'), { withFileTypes: true })) {
+      if (e.isDirectory() && !e.isSymbolicLink()) { installsFromRegistry = true; break; }
+    }
+  } catch { /* 目录不存在 → 不从 registry 安装 */ }
+  if (!installsFromRegistry) {
+    return pass(id, Severity.HIGH,
+      `registry 的 @deepseek-ai/* latest 标签确有异常（${affected.length} 处 plugin×peer 版本对，涉及 ${new Set(affected.map((a) => a.plugin)).size} 个插件），`
+      + `但本 profile 的 @deepseek-ai/* 来自 CLI 闭包而非 registry 安装 → **对已装实例无影响**；`
+      + `仅在你日后执行未固定版本的 pnpm add 时会踩到（建议显式 pin 版本）`);
+  }
+
   const details = affected.slice(0, 15).map(a =>
     `  ${a.plugin} — peer ${a.peerPkg} ${a.range} → latest=${a.brokenLatest}（broken）`
   ).join('\n');
