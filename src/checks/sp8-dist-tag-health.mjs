@@ -121,7 +121,7 @@ export async function run(profileDir) {
   ).join('\n');
 
   return fail(id, Severity.HIGH,
-    `检测到 ${affected.length} 个插件受 dist-tag 异常影响（#2763：@deepseek-ai/* 子包 latest 卡在 broken 版本）：\n${details}`,
+    `检测到 ${affected.length} 处 plugin×peer 版本对受 dist-tag 异常影响（涉及 ${new Set(affected.map((a) => a.plugin)).size} 个插件；#2763：@deepseek-ai/* 子包 latest 卡在 broken 版本）：\n${details}`,
     '对受影响插件显式 pin 版本（dsh plugin add <pkg>@<working-version>），或等待官方修复 dist-tags',
     ['#2763']
   );
