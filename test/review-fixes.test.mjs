@@ -34,16 +34,26 @@ test('SP2 回归: 普通点文件（.git 等）仍被跳过', async () => {
 });
 
 // ---------- SP5 ----------
-test('SP5 回归: scoped 包的 patch 必须被检查（此前 @scope 全部漏扫）', async () => {
+test('SP5 回归: scoped 包的声明必须被读到（此前 @scope 全部漏扫）', async () => {
   const dir = tempDir('sp5scoped');
   const pkgDir = join(dir, 'node_modules', '@evil', 'dsh-plugin');
   mkdirSync(pkgDir, { recursive: true });
-  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@evil/dsh-plugin', dsh: { bundle: {} } }));
-  // 有 fs 工具但无 sandbox 声明 → 应产生 fs-without-sandbox issue
+  // 2026-09（审计 R7）后 SP5 读真实字段，而非 patch 正文启发式：
+  // 该 scoped 插件声明了 client.inject 却无任何 compatibility → 必须报出，
+  // 且 detail 里必须出现 @scope/pkg 名——这正是"scoped 包不再漏扫"的判据。
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+    name: '@evil/dsh-plugin',
+    version: '1.0.0',
+    dsh: {
+      bundle: { patch: './cordis.patch.yml' },
+      client: { inject: ['@deepseek-ai/dsh-client-runtime'], platform: 'web' },
+    },
+  }));
   writeFileSync(join(pkgDir, 'cordis.patch.yml'), 'tool-fs: true\n');
-  const result = await runSp5(dir);
+  const result = await runSp5(dir, { dshHome: null, basePatchPath: null, semverMod: null, profileName: null });
   assert.equal(result.ok, false, `expected fail, got detail=${result.detail}`);
-  assert.ok(result.detail.includes('fs-without-sandbox'), `detail=${result.detail}`);
+  assert.ok(result.detail.includes('@evil/dsh-plugin'), `detail=${result.detail}`);
+  assert.ok(result.detail.includes('cross-process-surface-unconstrained'), `detail=${result.detail}`);
   rmSync(dir, { recursive: true, force: true });
 });
 

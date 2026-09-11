@@ -152,6 +152,9 @@ export async function createDefaultRegistry(loadExternal = true, options = {}) {
     import('./checks/sp8-dist-tag-health.mjs'),
     import('./checks/sp9-dual-instance-guard.mjs'),
     import('./checks/sp10-poison-pattern.mjs'),
+    import('./checks/sp11-patch-security-override.mjs'),
+    import('./checks/sp12-config-as-code-tag.mjs'),
+    import('./checks/sp13-tools-mode-sandbox.mjs'),
   ]);
   for (const mod of modules) {
     for (const val of Object.values(mod)) {
