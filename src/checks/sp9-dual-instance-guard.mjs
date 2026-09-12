@@ -199,7 +199,7 @@ export async function run(profileDir, options = {}) {
   const mirrorRoot = censuses.find(c => isMirrorRoot(c.root) && (c.broken > 0 || c.npx > 0));
   const envFixParts = [];
   if (mirrorRoot) {
-    envFixParts.push(`停止 dsh 后 rm -rf ${mirrorRoot.root} 再重启（healProfilesModuleFallback 会按安装闭包重建镜像），切勿删除 profile 目录本身`);
+    envFixParts.push(`**先直接重启 dsh**：healProfilesModuleFallback 在每次 boot 运行，且 ensureSymlink 对指向别处的链接会 unlink 后重建（dsh-app-boot:407-427），故断链通常一次重启即自愈；若重启后仍断，只删断链再重启——find ${mirrorRoot.root} -maxdepth 2 -type l ! -exec test -e {} \\; -delete（**勿 rm -rf 整个目录**：该函数只重建安装闭包 @deepseek-ai/*，不会重建 @liustack 等第三方 scope）`);
   }
   if (censuses.some(c => !isMirrorRoot(c.root) && (c.broken > 0 || c.npx > 0))) {
     envFixParts.push(`profile 自身的断链多为包被移除后遗留的 .bin/*，用包管理器重装该 profile 即可清理（pnpm install --force）`);
@@ -247,7 +247,7 @@ export async function run(profileDir, options = {}) {
   if (outside.length > 0) {
     const details = outside.slice(0, 10).map(o => `  ${o.name} → ${o.target}[${o.source}]`).join('\n');
     const outsideFix = mirrorRoot
-      ? `停止 dsh 后 rm -rf ${mirrorRoot.root} 再重启，让 healProfilesModuleFallback 按安装闭包重建镜像`
+      ? `先重启 dsh（heal 会在 boot 时重指断链）；若仍断，只删断链后重启，勿删整个目录`
       : '删除这些链接后重启 dsh，让其按安装闭包重建';
     return fail(id, Severity.HIGH,
       `检测到 ${outside.length} 条 @deepseek-ai/dsh-* 符号链接指向安装前缀之外（来源不可信，可能 shadow 掉 CLI 自带副本）：\n${details}` +
