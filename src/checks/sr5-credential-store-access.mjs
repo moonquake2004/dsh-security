@@ -145,7 +145,12 @@ export async function run(sessionFile) {
     for (const f of keyU.slice(0, 4)) lines.push(`  行${f.line} ${f.tool || '?'} — ${f.kind}: ${f.match}`);
   }
 
-  const severity = writes.length > 0 ? Severity.CRITICAL : (credU.length ? Severity.HIGH : Severity.MEDIUM);
+  // 严重度校准（2026-09）：**读取**凭据库是链条的"前置信号"，但不等于利用——
+  // 操作者在核实安全问题时也会合法读取。故读取定 MEDIUM（浮现于报告但不影响退出码），
+  // 只有**写入/篡改**才是确定的破坏行为，定 CRITICAL。
+  const severity = (writes.length > 0 || credStore.some((f) => f.write))
+    ? Severity.CRITICAL
+    : (credU.length ? Severity.MEDIUM : Severity.MEDIUM);
   return fail(id, severity,
     `检测到 ${credStore.length} 处宿主凭据库访问${keyMaterial.length ? `、${keyMaterial.length} 处私钥材料访问` : ''}：\n${lines.join('\n')}`,
     '若为自动化流程需要凭据，请改用宿主提供的受控接口而不是直接读文件；'

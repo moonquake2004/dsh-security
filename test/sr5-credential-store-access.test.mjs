@@ -28,6 +28,7 @@ test('SR5: 读取 .credentials.yaml → fail（#6465 链条前置）', async () 
   const f = tempSession([call('cat ~/.dsh/.credentials.yaml')]);
   const r = await run(f);
   assert.equal(r.ok, false, '读凭据库是沙箱绕过链条的必要前置，必须报出');
+  assert.equal(r.severity, 'medium', '读取属前置信号而非利用，定为 MEDIUM（浮现但不阻断）');
   assert.ok(/credentials/.test(r.detail));
   assert.ok(r.references.includes('#6465'));
   rmSync(join(f, '..'), { recursive: true, force: true });
