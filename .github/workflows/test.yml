@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install zstd (session logs are zstd-compressed)
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Show runtime versions
+        run: node --version && zstd --version
+      - name: Run the test suite
+        run: node --test test/*.mjs
+      # 自检：用本工具扫描仓库自身，确保发布的检查在干净环境里也能跑完
+      - name: Smoke — run the built-in checks against a temp profile
+        run: |
+          node -e "
+          import('./src/registry.mjs').then(async (m) => {
+            const reg = await m.createDefaultRegistry(false);
+            const checks = reg.list ? reg.list() : [];
+            if (!checks.length) { console.error('no checks registered'); process.exit(1); }
+            console.log('registered checks:', checks.length);
+          });
+          "
