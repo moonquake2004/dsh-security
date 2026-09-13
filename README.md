@@ -78,6 +78,9 @@ dsh-security 的目标：**建立 DSH 生态的统一安全检查层**，让任�
 │  SP8: dist-tag 异常检测 (#2763 broken latest)            │
 │  SP9: CLI 核心包泄漏检测 (#4640 symbol 分裂)              │
 │  SP10: 混淆投毒模式检测 (Buffer.from/atob/eval)          │
+│  SP11: patch 层改写安全行 (sandbox/approval/permission)   │
+│  SP12: !!js 配置即代码 (加载期执行 JS)                    │
+│  SP13: Code Mode × 沙箱错配 (#3245)                       │
 │  SS1: 凭据泄露检测 (会话日志)                             │
 │  SS2: PII 数据暴露检测                                    │
 │  SS3: 插件输出敏感数据检测                                │
@@ -88,6 +91,7 @@ dsh-security 的目标：**建立 DSH 生态的统一安全检查层**，让任�
 │  SR2: 权限提升检测 (sudo/chmod/chown)                     │
 │  SR3: 数据外泄检测 (凭据转发/网络外发)                     │
 │  SR4: 插件隔离验证 (跨插件数据泄漏)                       │
+│  SR5: 宿主凭据库访问检测 (.credentials.yaml/私钥材料)      │
 ├──────────────────────────────────────────────────────────┤
 │  Layer 3: Lifecycle Checks（生命周期）                     │
 │  SL1: 供应链完整性 (npm registry 一致性)                  │
