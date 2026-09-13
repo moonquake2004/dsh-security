@@ -140,6 +140,7 @@ export async function createDefaultRegistry(loadExternal = true, options = {}) {
     import('./checks/sr2-privilege-escalation.mjs'),
     import('./checks/sr3-data-exfiltration.mjs'),
     import('./checks/sr4-isolation-verify.mjs'),
+    import('./checks/sr5-credential-store-access.mjs'),
     import('./checks/sl1-supply-chain.mjs'),
     import('./checks/sl2-update-integrity.mjs'),
     import('./checks/sl3-reputation-score.mjs'),

@@ -35,6 +35,7 @@ export { sr1Check } from './checks/sr1-sandbox-violation.mjs';
 export { sr2Check } from './checks/sr2-privilege-escalation.mjs';
 export { sr3Check } from './checks/sr3-data-exfiltration.mjs';
 export { sr4Check } from './checks/sr4-isolation-verify.mjs';
+export { sr5Check } from './checks/sr5-credential-store-access.mjs';
 
 // Layer 3: Lifecycle Checks
 export { sl1Check } from './checks/sl1-supply-chain.mjs';

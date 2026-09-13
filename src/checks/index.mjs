@@ -9,6 +9,7 @@ export { sp7Check } from './sp7-client-syntax.mjs';
 export { sp8Check } from './sp8-dist-tag-health.mjs';
 export { sp9Check } from './sp9-dual-instance-guard.mjs';
 export { sp10Check } from './sp10-poison-pattern.mjs';
+export { sr5Check } from './sr5-credential-store-access.mjs';
 export { sp11Check } from './sp11-patch-security-override.mjs';
 export { sp12Check } from './sp12-config-as-code-tag.mjs';
 export { sp13Check } from './sp13-tools-mode-sandbox.mjs';
