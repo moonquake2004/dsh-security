@@ -24,14 +24,21 @@ jobs:
         run: node --version && zstd --version
       - name: Run the test suite
         run: node --test test/*.mjs
-      # 自检：用本工具扫描仓库自身，确保发布的检查在干净环境里也能跑完
-      - name: Smoke — run the built-in checks against a temp profile
+      # 自检：确保所有内置检查在干净环境里都能加载并注册（registry 无 list()，
+      # 用 getByPhase 各阶段计数，避免"看起来跑了其实没注册"的假绿）
+      - name: Smoke — the built-in checks all register
         run: |
-          node -e "
-          import('./src/registry.mjs').then(async (m) => {
-            const reg = await m.createDefaultRegistry(false);
-            const checks = reg.list ? reg.list() : [];
-            if (!checks.length) { console.error('no checks registered'); process.exit(1); }
-            console.log('registered checks:', checks.length);
-          });
+          node --input-type=module -e "
+          import { createDefaultRegistry } from './src/registry.mjs';
+          import { CheckPhase } from './src/protocol/phase.mjs';
+          const reg = await createDefaultRegistry(false);
+          const phases = Object.values(CheckPhase);
+          let total = 0;
+          for (const ph of phases) {
+            const n = reg.getByPhase(ph).length;
+            total += n;
+            console.log(ph.padEnd(14), n);
+          }
+          console.log('TOTAL', total);
+          if (total < 20) { console.error('registered too few checks:', total); process.exit(1); }
           "
