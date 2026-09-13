@@ -156,6 +156,7 @@ export async function createDefaultRegistry(loadExternal = true, options = {}) {
     import('./checks/sp11-patch-security-override.mjs'),
     import('./checks/sp12-config-as-code-tag.mjs'),
     import('./checks/sp13-tools-mode-sandbox.mjs'),
+    import('./checks/sp14-prompt-injection-surface.mjs'),
   ]);
   for (const mod of modules) {
     for (const val of Object.values(mod)) {

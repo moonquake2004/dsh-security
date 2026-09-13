@@ -29,6 +29,7 @@ export { sp10Check } from './checks/sp10-poison-pattern.mjs';
 export { sp11Check } from './checks/sp11-patch-security-override.mjs';
 export { sp12Check } from './checks/sp12-config-as-code-tag.mjs';
 export { sp13Check } from './checks/sp13-tools-mode-sandbox.mjs';
+export { sp14Check } from './checks/sp14-prompt-injection-surface.mjs';
 
 // Layer 2: Runtime Checks
 export { sr1Check } from './checks/sr1-sandbox-violation.mjs';

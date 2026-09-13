@@ -81,6 +81,7 @@ dsh-security 的目标：**建立 DSH 生态的统一安全检查层**，让任�
 │  SP11: patch 层改写安全行 (sandbox/approval/permission)   │
 │  SP12: !!js 配置即代码 (加载期执行 JS)                    │
 │  SP13: Code Mode × 沙箱错配 (#3245)                       │
+│  SP14: 提示注入面 (隐形 Unicode/凭据外泄/静默执行指令)     │
 │  SS1: 凭据泄露检测 (会话日志)                             │
 │  SS2: PII 数据暴露检测                                    │
 │  SS3: 插件输出敏感数据检测                                │
