@@ -20,6 +20,46 @@ import { CheckPhase } from '../protocol/phase.mjs';
 import { pass, fail, skip } from '../protocol/check.mjs';
 import { collectPatchLayers } from './sp11-patch-security-override.mjs';
 
+
+/** 找出 `!!js` 命中行所属的 entry 行 id（向上找最近的 `- id: <name>`）。 */
+export function rowIdFor(text, lineNo) {
+  const lines = text.split('\n');
+  for (let i = Math.min(lineNo - 1, lines.length - 1); i >= 0; i--) {
+    const m = /^\s*-?\s*id:\s*['"]?([\w@/.\-]+)['"]?\s*$/.exec(lines[i]);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * 该 row id 是否被**后续图层整值覆盖**。
+ *
+ * Cordis 的 patch 语义是"按 id 覆盖、后写获胜，且 config 是整值替换"。因此用户在自己的
+ * profile patch 里为同一 id 写一个完整的 `config:`，就能让 bundle 里那个 `__jsExpr` 节点
+ * **根本不进入配置树**——表达式永不求值。
+ *
+ * （2026-09 实测：这正是我们给 archify 用的缓解手段。若不做这个判定，SP12 会一律报
+ * CRITICAL，使用者就无法区分"暴露中"与"已用静态值覆盖"。）
+ */
+export function isOverriddenByUserPatch(profileDir, rowId) {
+  if (!profileDir || !rowId) return null;
+  const userPatch = join(profileDir, 'cordis.patch.yml');
+  if (!existsSync(userPatch)) return null;
+  let text;
+  try { text = readFileSync(userPatch, 'utf8'); } catch { return null; }
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*-?\s*id:\s*['"]?([\w@/.\-]+)['"]?\s*$/.exec(lines[i]);
+    if (!m || m[1] !== rowId) continue;
+    // 该行之后、下一个 entry 之前，是否出现 `config:`（整值替换的充分条件）
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\s*-\s+id:/.test(lines[j])) break;
+      if (/^\s*config:\s*$/.test(lines[j])) return userPatch;
+    }
+  }
+  return null;
+}
+
 /** 找出 `!!js` 标签出现处（行级，带上下文），排除注释行 */
 export function jsTagHits(text) {
   const hits = [];
@@ -83,14 +123,27 @@ export async function run(profileDir) {
   const layers = collectPatchLayers(profileDir);
   const bundleHits = [];
   const userHits = [];
+  const mitigatedHits = [];
   for (const { file, layer, pkg } of layers) {
     let text;
     try { text = readFileSync(file, 'utf8'); } catch { continue; }
     const hits = jsTagHits(text);
     if (!hits.length) continue;
     const sample = hits.slice(0, 3).map((h) => `行${h.line}: ${h.text}`).join('; ');
-    if (layer === 'bundle') bundleHits.push(`${pkg || file}（${sample}）`);
-    else userHits.push(`${file}（${sample}）`);
+    if (layer === 'bundle') {
+      // 逐处判定是否被用户层整值覆盖（config 整值替换 → __jsExpr 不入配置树 → 不求值）
+      const active = [];
+      const mitigated = [];
+      for (const h of hits) {
+        const rowId = rowIdFor(text, h.line);
+        const by = isOverriddenByUserPatch(profileDir, rowId);
+        (by ? mitigated : active).push({ ...h, rowId, by });
+      }
+      if (active.length) bundleHits.push(`${pkg || file}（${active.slice(0, 3).map((h) => `行${h.line}: ${h.text}`).join('; ')}）`);
+      if (mitigated.length) mitigatedHits.push(`${pkg || file} — 行${mitigated[0].line} 的 id=${mitigated[0].rowId} 已被用户 patch 整值覆盖（${mitigated[0].by}）→ 表达式不会求值`);
+    } else {
+      userHits.push(`${file}（${sample}）`);
+    }
   }
 
   const patchIssues = bundlePatchIssues(profileDir);
@@ -102,11 +155,21 @@ export async function run(profileDir) {
     }
     if (patchIssues.length) parts.push(`dsh.bundle.patch 路径异常：\n  ${patchIssues.join('\n  ')}`);
     return fail(id, Severity.CRITICAL,
-      parts.join('\n') + (userHits.length ? `\n（用户自有 patch 另有 !!js ${userHits.length} 处，属用户自主配置）` : ''),
+      parts.join('\n')
+      + (mitigatedHits.length ? `\n（另有 ${mitigatedHits.length} 处第三方 !!js 已被用户层整值覆盖，表达式不会求值：${mitigatedHits.join('；')}）` : '')
+      + (userHits.length ? `\n（用户自有 patch 另有 !!js ${userHits.length} 处，属用户自主配置）` : ''),
       '要求该插件移除 !!js 标签（改用静态配置值）；若确需动态配置，应由用户在自己的 profile patch 里写。'
       + '同时修正 dsh.bundle.patch 指向，使其存在于包内',
       ['#454', '#587', '#3354']
     );
+  }
+
+  if (mitigatedHits.length) {
+    // 有第三方 !!js，但已被用户层静态值覆盖：风险已消除，仍如实列出（visibility），但不判失败
+    return pass(id, Severity.CRITICAL,
+      `第三方 patch 含 !!js，但相关行已被用户层整值覆盖，表达式不会求值：\n  ${mitigatedHits.join('\n  ')}`
+      + (userHits.length ? `\n（用户自有 patch 另有 !!js ${userHits.length} 处，属自主配置）` : '')
+      + '\n注意：bundle 文件本身仍含 !!js，插件升级后请复核本覆盖是否仍然有效');
   }
 
   const note = userHits.length ? `；用户自有 patch 含 ${userHits.length} 处 !!js（用户自主配置，仅提示）` : '';

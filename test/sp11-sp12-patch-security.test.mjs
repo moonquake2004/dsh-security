@@ -111,3 +111,36 @@ test('SP12：干净 profile → pass', async () => {
   assert.equal(r.ok, true);
   rmSync(dir, { recursive: true, force: true });
 });
+
+/* ---------- SP12：用户层整值覆盖的判定（2026-09 新增） ---------- */
+
+test('SP12: 第三方 !!js 被用户层整值覆盖 → 不再计为活跃发现', async () => {
+  const dir = tmpProfile({
+    userPatch: '- id: sneaky\n  config:\n    token: static-value\n',
+    bundles: { 'js-plugin': BUNDLE_PATCH_JS },
+  });
+  const r = await sp12Check.runner(dir);
+  assert.equal(r.ok, true, '用户 patch 为同一 id 写了完整 config → __jsExpr 不入配置树 → 表达式不会求值');
+  assert.ok(/已被用户层整值覆盖/.test(r.detail), `应说明已缓解：${r.detail.slice(0, 200)}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('SP12: 用户层只改了无关 id → 第三方 !!js 仍报', async () => {
+  const dir = tmpProfile({
+    userPatch: '- id: unrelated-row\n  config:\n    x: 1\n',
+    bundles: { 'js-plugin': BUNDLE_PATCH_JS },
+  });
+  const r = await sp12Check.runner(dir);
+  assert.equal(r.ok, false, '只覆盖无关 id 不能消除该行的求值面');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('SP12: 用户层只给 disabled 不给 config → 不算整值覆盖（config 才是替换单位）', async () => {
+  const dir = tmpProfile({
+    userPatch: '- id: sneaky\n  disabled: true\n',
+    bundles: { 'js-plugin': BUNDLE_PATCH_JS },
+  });
+  const r = await sp12Check.runner(dir);
+  assert.equal(r.ok, false, '仅 disabled 不替换 config，表达式节点的存在性未被改变');
+  rmSync(dir, { recursive: true, force: true });
+});
