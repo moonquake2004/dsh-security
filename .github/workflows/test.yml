@@ -8,37 +8,43 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        node: ['20.x', '22.x', '24.x']
+        # 2026-09：加入 windows-latest。安全检查里有大量路径判定（SP9 的安装前缀/mirror、
+        # SP12/SP15 的 realpath 与逃逸判断、SR5 的路径匹配），这些在 Windows 上语义不同
+        # （反斜杠、盘符、`C:\` 与 `/c/` 形态），只在 ubuntu 上跑等于没验证过 win32 支持。
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.x', '24.x']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Install zstd (session logs are zstd-compressed)
-        run: sudo apt-get update && sudo apt-get install -y zstd
-      - name: Show runtime versions
-        run: node --version && zstd --version
+      - name: Install zstd
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            choco install zstd --no-progress -y || echo "zstd install failed; zstd-gated tests will skip"
+          else
+            sudo apt-get update && sudo apt-get install -y zstd
+          fi
+      - name: Show runtime
+        shell: bash
+        run: node --version && (zstd --version || echo "no zstd")
       - name: Run the test suite
+        shell: bash
         run: node --test test/*.mjs
-      # 自检：确保所有内置检查在干净环境里都能加载并注册（registry 无 list()，
-      # 用 getByPhase 各阶段计数，避免"看起来跑了其实没注册"的假绿）
-      - name: Smoke — the built-in checks all register
+      - name: Smoke — every check registers
+        shell: bash
         run: |
           node --input-type=module -e "
           import { createDefaultRegistry } from './src/registry.mjs';
           import { CheckPhase } from './src/protocol/phase.mjs';
           const reg = await createDefaultRegistry(false);
-          const phases = Object.values(CheckPhase);
           let total = 0;
-          for (const ph of phases) {
-            const n = reg.getByPhase(ph).length;
-            total += n;
-            console.log(ph.padEnd(14), n);
-          }
-          console.log('TOTAL', total);
-          if (total < 20) { console.error('registered too few checks:', total); process.exit(1); }
+          for (const ph of Object.values(CheckPhase)) total += reg.getByPhase(ph).length;
+          console.log('registered', total);
+          if (total < 20) { console.error('too few checks'); process.exit(1); }
           "
