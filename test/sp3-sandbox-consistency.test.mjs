@@ -205,7 +205,7 @@ test('SP3: 默认 mode=danger-full-access（非 Windows）→ fail medium，并�
   rmSync(root, { recursive: true, force: true });
 });
 
-test('SP3: DSH_PERMISSION_MODE=danger-full-access 环境覆盖 → fail（真实生效值优先）', async () => {
+test('SP3: DSH_PERMISSION_MODE=danger-full-access 环境覆盖 → fail（真实生效值优先）', { skip: process.platform === 'win32' ? 'SP3 有意在 Windows 上跳过 danger-full-access 结论（仅在非 Windows 讨论工具不受文件系统沙箱限制），故该用例仅 POSIX 适用' : false }, async () => {
   const { root, dshHome, patchPath } = fixture(BASE_PATCH);
   const result = await withEnv(
     { DSH_BASE_PATCH: patchPath, DSH_HOME: dshHome, DSH_PERMISSION_MODE: 'danger-full-access' },
