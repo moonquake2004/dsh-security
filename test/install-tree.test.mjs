@@ -25,17 +25,22 @@ import { readPermissionSettings, readHostSandboxConfig, resolveBasePatch, evalSc
 function tempRoot(tag) { return mkdtempSync(join(tmpdir(), `dsh-security-tree-${tag}-`)); }
 
 test('install-tree: <home>/profiles/<name> → dshHome + profileName + 共享镜像目录', () => {
-  const layout = resolveProfileLayout('/tmp/fakehome/.dsh/profiles/web');
-  assert.equal(layout.dshHome, '/tmp/fakehome/.dsh');
+  // 用 join() 构造两侧：Windows 上分隔符是 `\`，硬编码 `/` 字面量只在 POSIX 成立（2026-09 Windows CI 抓出）
+  const home = join(tmpdir(), 'fakehome', '.dsh');
+  const profileDir = join(home, 'profiles', 'web');
+  const layout = resolveProfileLayout(profileDir);
+  assert.equal(layout.dshHome, home);
   assert.equal(layout.profileName, 'web');
-  assert.equal(resolveSharedMirrorDir('/tmp/fakehome/.dsh/profiles/web'), '/tmp/fakehome/.dsh/profiles/node_modules');
+  assert.equal(resolveSharedMirrorDir(profileDir), join(home, 'profiles', 'node_modules'));
 });
 
 test('install-tree: <home>/profiles 自身 → 镜像根即其 node_modules', () => {
-  const layout = resolveProfileLayout('/tmp/fakehome/.dsh/profiles');
-  assert.equal(layout.dshHome, '/tmp/fakehome/.dsh');
+  const home = join(tmpdir(), 'fakehome', '.dsh');
+  const profilesDir = join(home, 'profiles');
+  const layout = resolveProfileLayout(profilesDir);
+  assert.equal(layout.dshHome, home);
   assert.equal(layout.profileName, null);
-  assert.equal(resolveSharedMirrorDir('/tmp/fakehome/.dsh/profiles'), '/tmp/fakehome/.dsh/profiles/node_modules');
+  assert.equal(resolveSharedMirrorDir(profilesDir), join(profilesDir, 'node_modules'));
 });
 
 test('install-tree: 非 profile 路径 → 不臆造 DSH_HOME', () => {

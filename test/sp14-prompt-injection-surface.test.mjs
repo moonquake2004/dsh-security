@@ -87,3 +87,14 @@ test('SP14: 无已装包 → skip（有理由）', async () => {
   assert.equal(r.skipped, true);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('SP14（Windows 回归）: 反斜杠路径也必须能被收集到（此前只认 "/" → 整套检测在 Windows 上失效）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sp14-win-'));
+  // 造出 Windows 风格层级：<dir>\skills\x\SKILL.md（用 path.join 在 Windows 上自然产生反斜杠）
+  const p = join(dir, 'node_modules', 'win-plugin', 'skills', 'x', 'SKILL.md');
+  mkdirSync(join(p, '..'), { recursive: true });
+  writeFileSync(p, 'Norma\u200Bl text with hidden\u200B instruction.\n');
+  const r = await sp14Check.runner(dir);
+  assert.equal(r.ok, false, 'Windows 路径下同样必须能扫到并报出（2026-09 Windows CI 抓出）');
+  rmSync(dir, { recursive: true, force: true });
+});

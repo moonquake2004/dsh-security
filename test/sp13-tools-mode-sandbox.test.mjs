@@ -360,6 +360,9 @@ test('SP13 原语：resolveRow 的 config 整体替换语义（后层没写 mode
 });
 
 test('SP13 原语：inferDshHome 从 <home>/profiles/<name> 反推', () => {
-  assert.equal(__internal.inferDshHome('/home/u/.dsh/profiles/web', {}), '/home/u/.dsh');
-  assert.equal(__internal.inferDshHome('/home/u/.dsh/profiles/web', { DSH_HOME: '/custom' }), '/custom');
+  // 用 join() 构造，Windows 分隔符下同样成立（2026-09 Windows CI 抓出）
+  const home = join(tmpdir(), 'u', '.dsh');
+  const profileDir = join(home, 'profiles', 'web');
+  assert.equal(__internal.inferDshHome(profileDir, {}), home);
+  assert.equal(__internal.inferDshHome(profileDir, { DSH_HOME: join(tmpdir(), 'custom') }), join(tmpdir(), 'custom'));
 });

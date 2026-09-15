@@ -61,7 +61,10 @@ const OVERRIDE_PHRASING = /(ignore|disregard|forget)\s+(all\s+)?(previous|prior|
 
 /** 会被模型读到的文本文件 */
 const PROMPT_TEXT_EXT = new Set(['.md', '.mdx', '.txt', '.yml', '.yaml']);
-const PROMPT_DIR_HINT = /(^|\/)(skills?|prompts?|agents?|presets?|instructions?)(\/|$)/i;
+// 注意：路径分隔符必须同时接受 `/` 与 `\` —— Windows 上 path.join 产出反斜杠，
+// 只写 `/` 会让本检查在 Windows 上一个文件都收集不到（整套检测形同虚设）。
+// 2026-09 由 Windows CI 抓出（此前只有 ubuntu 一个环境）。
+const PROMPT_DIR_HINT = /(^|[\\/])(skills?|prompts?|agents?|presets?|instructions?)([\\/]|$)/i;
 
 /** 递归收集疑似"注入内容"的文件（限深、限量，避免扫描爆炸） */
 export function collectPromptFiles(pkgDir, { maxFiles = 400, maxDepth = 4 } = {}) {
@@ -162,7 +165,7 @@ export async function run(profileDir) {
   }
   const hasExfil = findings.some((f) => f.tier === 'exfil');
   const details = listed.slice(0, 10).map((f) =>
-    `  ${f.pkg} — ${f.kind}${f.tier === 'invisible' ? '（不可见字符）' : f.tier === 'exfil' ? '（凭据外泄指令）' : '（静默执行指令）'}: ${f.file.split('/node_modules/')[1] || f.file}`
+    `  ${f.pkg} — ${f.kind}${f.tier === 'invisible' ? '（不可见字符）' : f.tier === 'exfil' ? '（凭据外泄指令）' : '（静默执行指令）'}: ${f.file.split(/[\\/]node_modules[\\/]/).slice(1).join('/') || f.file}`
   ).join('\n');
 
   return fail(id, hasExfil ? Severity.CRITICAL : Severity.HIGH,

@@ -100,7 +100,7 @@ test('SP1 回归：pnpm profile 无任何 lockfile → skip(NO_LOCKFILE)，不�
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('SP1 回归：npm ENOLOCK（package-lock 存在但 npm 拒绝审计）→ skip 而非 pass', async () => {
+test('SP1 回归：npm ENOLOCK（package-lock 存在但 npm 拒绝审计）→ skip 而非 pass', { skip: process.platform === 'win32' ? '用例通过 PATH 桩替换 npm/pnpm（POSIX shell 脚本），Windows 上桩不可执行，检查会正确报 PM_NOT_FOUND；该分支已在 ubuntu CI 覆盖' : false }, async () => {
   const dir = withPkg(tempProfile());
   writeFileSync(join(dir, 'package-lock.json'), '{}');
   const binDir = join(dir, 'stub-bin');
@@ -117,7 +117,7 @@ test('SP1 回归：npm ENOLOCK（package-lock 存在但 npm 拒绝审计）→ s
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('SP1: pnpm audit 报 high 漏洞 → fail high，使用真实 severity 与依赖数', async () => {
+test('SP1: pnpm audit 报 high 漏洞 → fail high，使用真实 severity 与依赖数', { skip: process.platform === 'win32' ? '用例通过 PATH 桩替换 npm/pnpm（POSIX shell 脚本），Windows 上桩不可执行，检查会正确报 PM_NOT_FOUND；该分支已在 ubuntu CI 覆盖' : false }, async () => {
   const dir = withPkg(tempProfile());
   writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
   const binDir = join(dir, 'stub-bin');
@@ -133,7 +133,7 @@ test('SP1: pnpm audit 报 high 漏洞 → fail high，使用真实 severity 与�
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('SP1: pnpm audit 干净 → pass，并给出真实依赖计数', async () => {
+test('SP1: pnpm audit 干净 → pass，并给出真实依赖计数', { skip: process.platform === 'win32' ? '用例通过 PATH 桩替换 npm/pnpm（POSIX shell 脚本），Windows 上桩不可执行，检查会正确报 PM_NOT_FOUND；该分支已在 ubuntu CI 覆盖' : false }, async () => {
   const dir = withPkg(tempProfile());
   writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
   const binDir = join(dir, 'stub-bin');
