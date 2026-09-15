@@ -34,35 +34,54 @@ const CREDENTIAL_STORE_PATTERNS = [
   // 通用一条即可（避免同一路径被多条规则重复计入）
   { name: 'credentials store', regex: /\bcredentials?(-local)?\.(ya?ml|json)\b/i },
   // 浏览器凭据材料（#6720 实测：agent 读取并复制 Chrome Profile 以"寻找可复用的登录状态"）。
-  // 判据分两档，避免把正文/协议里的 "Cookies"/"Cookie" 当成路径：
-  //   ① 浏览器 profile 目录（高信号，几乎只会出现在真实路径里）
-  //   ② 凭据文件名，但**要求前面有路径分隔符**（`/Cookies`、`\Login Data`）
-  { name: 'browser profile dir', regex: /(?:Google\/Chrome|google-chrome|Chromium|BraveSoftware|Microsoft Edge|Firefox\/Profiles|\.mozilla\/firefox)/i },
+  // **只认凭据文件名，且要求前面带路径分隔符**（`/Cookies`、`\Login Data`）。
+  // 2026-09 实测教训：初版还加了"浏览器 profile 目录"（Google/Chrome|Chromium|…）作高信号判据，
+  // 结果在真实库上 **25 个会话全部误报** —— 仅仅**提到**浏览器或路径就会命中，与凭据访问无关。
+  // 目录名不是凭据，文件名才是；要抓的是能复用登录态的那几个文件。
   { name: 'browser credential file', regex: /[\\/](?:Cookies|Login Data|logins\.json|cookies\.sqlite|key[34]\.db|Local State)(?=['"\s]|$)/i },
 ];
 
 /**
- * 二级：**配置载体**（可能含令牌，但日常诊断本就要读它）。
- * 仅当**写/改/删**时报——读取属正常运维（2026-09 实测：把读取也算发现会把
- * 合法的排障操作全报出来，噪声不可收敛）。
+ * 二级：**配置载体** —— **整类取消**（2026-09 在 103 个会话的整库实测结论）。
+ *
+ * 曾把 `.npmrc` / `settings.yaml` / `security.json` 在"被写入"时报出，理由是可能含令牌。
+ * 但整库尺度上它产出成片假警报，且**根源不可修**：
+ *   · `cat ~/.npmrc 2>/dev/null` 因 `2>/dev/null` 里的 `>` 被判为"写入凭据库"；
+ *   · `cp a b` 这类与凭据无关的写操作也被算到凭据头上；
+ *   · 从**命令字符串**推断"写入目标"本质上不可靠——没有解析，分不清文本里哪段是路径、哪段是重定向。
+ * 按本仓库 `SECURITY.md` 的立场——**高噪声假阳性是工具的漏洞**（它训练使用者忽略告警）——
+ * 与其继续调参，不如整类取消：这些文件的**读取**本就是常规排障的一部分。
  */
-const CONFIG_CARRIER_PATTERNS = [
-  { name: 'DSH settings.yaml', regex: /(^|[\s'"=~/])\.dsh\/settings\.ya?ml\b/i },
-  { name: 'npm token store', regex: /(^|[\s'"=~/])\.npmrc\b/i },
-  { name: 'security.json', regex: /\bsecurity\.json\b/i },
-];
+const CONFIG_CARRIER_PATTERNS = [];
 
-/** 私钥材料（工作区之外读取同样值得提示） */
+/**
+ * 私钥材料：**只留无歧义、且要求真实路径前缀**的形态。同样来自整库实测——
+ * 裸 `.key` 会命中 jq 表达式里的 `\(.key)`；`.env` 会命中"在项目里创建/编辑 .env"这类
+ * 正常开发行为（工作区内的 .env 不是工作区外的密钥材料）。这两类都取消，
+ * 只留私钥本身：`id_rsa` / `.pem` / `.p12` 这些名字在正常文本里几乎不会出现。
+ */
 const KEY_MATERIAL_PATTERNS = [
-  { name: 'private key', regex: /\bid_(rsa|ed25519|ecdsa)\b/i },
-  { name: 'key file', regex: /\.(pem|p12|pfx|key)\b/i },
-  { name: 'env file', regex: /(^|[\s'"=/])\.env(\.local|\.production)?\b/i },
+  { name: 'ssh private key', regex: /(?:~|[/\\]|\.\/)[\w.-]*id_(?:rsa|ed25519|ecdsa)\b/i },
+  { name: 'private key file', regex: /(?:~|[/\\]|\.\/)[\w.-]*\.(?:pem|p12|pfx)\b/i },
 ];
 
 /** 破坏性动词：命中凭据库时升级为"篡改" */
 // 破坏性/写入动词。注意不能给 `>` 加 \b —— `>` 非单词字符，前面是空格时 `\b>` 永远不成立
 // （2026-09 实测：`echo … >> ~/.npmrc` 因此漏判）。
-const WRITE_VERB = /(^|[\s;&|"\'])(rm|mv|cp|truncate|shred|dd|tee|chmod|chown|install|python[0-9]?|node)\b|\bsed\s+-i\b|(^|[\s;&|"\'])>>?\s*\S/;
+/**
+ * 写入判定 —— **必须紧邻该凭据路径**，而不是"命令里出现过写动作"。
+ * 2026-09 整库实测教训（此前从未在整库尺度验证过 SR5）：宽泛判定会把
+ * `cat ~/.npmrc 2>/dev/null`（`2>/dev/null` 含 `>`）当成"写凭据库"。
+ */
+function writeTargets(text, token) {
+  if (!token) return false;
+  const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const verbs = '(?:rm|mv|cp|truncate|shred|dd|tee|chmod|chown|install|sed\\s+-i|python[0-9]?|node)';
+  const a = new RegExp(verbs + '\\s+(?:-\\S+\\s+)*[^\\s;|&]{0,60}' + esc, 'i');   // rm -f <path> / cp x <path> …
+  const bIdx = text.search(new RegExp('>>?\\s*[^\\s;|&]{0,60}' + esc, 'i'));         // 重定向到该路径
+  const b = bIdx >= 0 && !/>>?\s*\/dev\/null/.test(text.slice(Math.max(0, bIdx - 20), bIdx + 80));
+  return a.test(text) || b;
+}
 
 function scanText(text) {
   const hits = [];
@@ -95,7 +114,7 @@ export async function run(sessionFile) {
       if (ev.kind !== 'call' || !ev.argsText) return;
       const hits = scanText(ev.argsText);
       if (!hits.length) return;
-      const isWrite = WRITE_VERB.test(ev.argsText);
+      const isWrite = writeTargets(ev.argsText, hits.length ? hits[0].match : "");
       for (const h of hits) {
         // 二级（配置载体）只在写/改时报；读取是正常诊断，不入发现
         if (h.tier === 'config-carrier' && !isWrite) continue;
