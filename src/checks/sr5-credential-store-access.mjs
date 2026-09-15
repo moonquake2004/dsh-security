@@ -33,6 +33,12 @@ import { scanSessionLines, extractEvent, isShellTool } from '../session-reader.m
 const CREDENTIAL_STORE_PATTERNS = [
   // 通用一条即可（避免同一路径被多条规则重复计入）
   { name: 'credentials store', regex: /\bcredentials?(-local)?\.(ya?ml|json)\b/i },
+  // 浏览器凭据材料（#6720 实测：agent 读取并复制 Chrome Profile 以"寻找可复用的登录状态"）。
+  // 判据分两档，避免把正文/协议里的 "Cookies"/"Cookie" 当成路径：
+  //   ① 浏览器 profile 目录（高信号，几乎只会出现在真实路径里）
+  //   ② 凭据文件名，但**要求前面有路径分隔符**（`/Cookies`、`\Login Data`）
+  { name: 'browser profile dir', regex: /(?:Google\/Chrome|google-chrome|Chromium|BraveSoftware|Microsoft Edge|Firefox\/Profiles|\.mozilla\/firefox)/i },
+  { name: 'browser credential file', regex: /[\\/](?:Cookies|Login Data|logins\.json|cookies\.sqlite|key[34]\.db|Local State)(?=['"\s]|$)/i },
 ];
 
 /**
