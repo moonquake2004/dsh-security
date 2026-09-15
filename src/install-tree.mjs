@@ -251,14 +251,43 @@ export function approxSatisfies(v, range) {
  * 判定 `version` 是否满足 `range`。
  * @returns {{satisfies: boolean|null, exact: boolean}} satisfies=null 表示无法判定
  */
+/**
+ * 判定"已装版本是否落在声明区间内"。
+ *
+ * **rc 语义（2026-09 由社区 @ciceroyang 指出并实测确认，我们此前有误报）**：DSH 生态几乎全在
+ * 预发布上，而 strict semver 的预发布规则要求"比较器与被判版本在同一 [major,minor,patch] 元组
+ * 且比较器自身含预发布"才允许匹配。于是 `>=0.1.0-rc.5 <0.2.0` 面对 `0.1.5-rc.2` 会返回 false ——
+ * 把一个**健康**插件报成"不兼容核心"。这正是本项目定义为漏洞的那类假阳性。
+ *
+ * 规则（与 ciceroyang/peer_range 一致，且已用真 node-semver 逐例验证）：
+ *   1. 区间里**出现任何预发布比较器** → 按数值判定（`includePrerelease: true`）：
+ *      `>=0.1.0-rc.5 <0.2.0` 接受 `0.1.5-rc.2`；`>=0.1.0-rc.5 <0.1.0-rc.7` 拒绝它。
+ *   2. 区间是**纯 release**（如 `>=4.0.0`）而安装版本是预发布 → **unknown**（不判不兼容：
+ *      该区间从未考虑预发布，据此断言"不兼容"就是猜）。
+ *   3. 其余情况按通常语义（`includePrerelease: false`）。
+ * 返回 `state`：'satisfied' | 'unsatisfied' | 'unknown'（`satisfies` 仅为兼容旧调用保留）。
+ */
 export function checkRange(version, range, semverMod = null) {
-  if (!version || !range) return { satisfies: null, exact: false };
-  if (semverMod) {
-    try {
-      return { satisfies: Boolean(semverMod.satisfies(version, range, { includePrerelease: false })), exact: true };
-    } catch { return { satisfies: null, exact: false }; }
+  if (!version || !range) return { satisfies: null, state: 'unknown', exact: false };
+  if (!semverMod) {
+    const ap = approxSatisfies(version, range);
+    return { satisfies: ap, state: ap === null ? 'unknown' : (ap ? 'satisfied' : 'unsatisfied'), exact: false };
   }
-  return { satisfies: approxSatisfies(version, range), exact: false };
+  try {
+    const isPre = (v) => Boolean(semverMod.prerelease(v));
+    const rangeHasPre = (() => {
+      try {
+        const rg = new semverMod.Range(range);
+        return rg.set.flat().some((c) => c.semver && c.semver.prerelease && c.semver.prerelease.length > 0);
+      } catch { return null; }
+    })();
+    if (rangeHasPre === null) return { satisfies: null, state: 'unknown', exact: false };
+    if (!rangeHasPre && isPre(version)) {
+      return { satisfies: null, state: 'unknown', exact: true }; // 规则 2：不据纯 release 区间断言不兼容
+    }
+    const ok = Boolean(semverMod.satisfies(version, range, { includePrerelease: rangeHasPre }));
+    return { satisfies: ok, state: ok ? 'satisfied' : 'unsatisfied', exact: true };
+  } catch { return { satisfies: null, state: 'unknown', exact: false }; }
 }
 
 /**

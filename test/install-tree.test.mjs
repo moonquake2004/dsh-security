@@ -120,7 +120,7 @@ test('install-tree: checkRange 用 node-semver 时精确；无 semver 时只在�
   assert.equal(approxSatisfies('1.2.3', '>=1.0.0 <2.0.0'), null, '多比较符无法解析 → 必须 null（不猜）');
   assert.equal(approxSatisfies('1.2.3', 'not-a-range'), null);
 
-  assert.deepEqual(checkRange('1.2.3', '^1.0.0'), { satisfies: true, exact: false });
+  assert.deepEqual(checkRange('1.2.3', '^1.0.0'), { satisfies: true, state: 'satisfied', exact: false });
   assert.equal(checkRange('1.2.3', null).satisfies, null);
 
   if (semverMod) {
@@ -225,4 +225,34 @@ test('dsh-config: resolveBasePatch 逐级父目录找到 dsh-base patch', () => 
   assert.equal(resolveBasePatch(profileDir), join(baseDir, 'cordis.patch.yml'));
   assert.equal(resolveBasePatch(join(root, 'nowhere')), null);
   rmSync(root, { recursive: true, force: true });
+});
+
+/* ---------- rc 语义（2026-09 社区 @ciceroyang 指出；此前我们会把健康插件报成不兼容） ---------- */
+
+function loadSemver() {
+  for (const base of [
+    '/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-base',
+    '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-base',
+  ]) {
+    try { return createRequire(join(base, 'x.js'))('semver'); } catch { /* 继续 */ }
+  }
+  return null;
+}
+
+test('checkRange rc 语义：含预发布比较器的区间按数值判定', { skip: !loadSemver() ? '本机找不到 node-semver' : false }, () => {
+  const semver = loadSemver();
+  // 第一种：strict semver 会判 false（=误报"不兼容"），按数值应判满足
+  assert.equal(checkRange('0.1.5-rc.2', '>=0.1.0-rc.5 <0.2.0', semver).state, 'satisfied');
+  // 第二种：确实越界，应判不满足
+  assert.equal(checkRange('0.1.5-rc.2', '>=0.1.0-rc.5 <0.1.0-rc.7', semver).state, 'unsatisfied');
+  // 正式版越界，与预发布无关
+  assert.equal(checkRange('0.2.1', '>=0.1.0-rc.5 <0.2.0', semver).state, 'unsatisfied');
+});
+
+test('checkRange rc 语义：纯 release 区间面对预发布安装版本 → unknown（不猜）', { skip: !loadSemver() ? '本机找不到 node-semver' : false }, () => {
+  const semver = loadSemver();
+  assert.equal(checkRange('0.1.5-rc.2', '>=4.0.0', semver).state, 'unknown');
+  // 非预发布版本对纯 release 区间仍是正常判定
+  assert.equal(checkRange('5.0.0', '>=4.0.0', semver).state, 'satisfied');
+  assert.equal(checkRange('3.0.0', '>=4.0.0', semver).state, 'unsatisfied');
 });

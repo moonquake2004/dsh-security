@@ -155,7 +155,9 @@ function inspectPlugin(pkgJsonPath, displayName, ctx) {
 
   if (declared.compatDsh && provided) {
     const r = checkRange(provided, declared.compatDsh, ctx.semverMod);
-    if (r.satisfies === false) {
+    // 三态：仅 'unsatisfied' 才是发现；'unknown'（如纯 release 区间面对预发布安装版本）不报——
+    // 见 install-tree.checkRange 的 rc 语义说明（2026-09 社区纠正后修正，此前会误报健康插件）
+    if (r.state === 'unsatisfied') {
       findings.push({
         severity: 'medium',
         type: 'declared-core-range-excludes-provided',
