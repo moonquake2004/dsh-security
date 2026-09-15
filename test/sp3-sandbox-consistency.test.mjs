@@ -190,7 +190,7 @@ test('SP3: patch 里 sandbox-policy/approval/permission 全缺失 → skip 并�
   rmSync(root, { recursive: true, force: true });
 });
 
-test('SP3: 默认 mode=danger-full-access（非 Windows）→ fail medium，并点出审批 never', async () => {
+test('SP3: 默认 mode=danger-full-access（非 Windows）→ fail medium，并点出审批 never', { skip: process.platform === 'win32' ? 'SP3 有意在 Windows 上跳过 danger-full-access 结论（仅在非 Windows 讨论工具不受文件系统沙箱限制），故该用例仅 POSIX 适用' : false }, async () => {
   const patch = BASE_PATCH.replace("?? 'workspace-write'", "?? 'danger-full-access'")
     .replace("? 'never' : 'ask'", "? 'never' : 'never'");
   const { root, dshHome, patchPath } = fixture(patch);
@@ -233,7 +233,7 @@ test('SP3: settings.yaml permission.defaultPreset=read-only → 真实生效为�
   rmSync(root, { recursive: true, force: true });
 });
 
-test('SP3: settings.yaml defaultPreset=danger-full-access → fail', async () => {
+test('SP3: settings.yaml defaultPreset=danger-full-access → fail', { skip: process.platform === 'win32' ? 'SP3 有意在 Windows 上跳过 danger-full-access 结论（仅在非 Windows 讨论工具不受文件系统沙箱限制），故该用例仅 POSIX 适用' : false }, async () => {
   const { root, dshHome, patchPath } = fixture(BASE_PATCH, {
     settingsContent: 'permission:\n  defaultPreset: danger-full-access\n',
   });
